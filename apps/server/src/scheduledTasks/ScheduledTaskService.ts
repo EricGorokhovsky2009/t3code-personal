@@ -25,6 +25,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -95,6 +96,11 @@ export class ScheduledTaskWebhookOrigin extends Context.Reference<Effect.Effect<
     defaultValue: () => Effect.succeed({ relayHookBaseUrl: null }),
   },
 ) {}
+
+/** A queued webhook delivery that no longer applies to its task; `reason` is shown in the delivery log. */
+class WebhookDeliverySkipped extends Data.TaggedError("WebhookDeliverySkipped")<{
+  readonly reason: string;
+}> {}
 
 interface RateWindow {
   readonly accepted: ReadonlyArray<number>;
@@ -698,6 +704,11 @@ export const layer = Layer.effect(
         // the poll loaded it — none of those may fire.
         const active = yield* findTask(task.id);
         if (active === null) {
+          if (webhook !== undefined) {
+            return yield* new WebhookDeliverySkipped({
+              reason: "The task was deleted before this delivery ran.",
+            });
+          }
           // A manual run on a just-deleted task must fail loudly, not report
           // a successful run that never dispatched.
           if (trigger !== "scheduled") {
@@ -717,12 +728,19 @@ export const layer = Layer.effect(
         ) {
           return active;
         }
-        // A queued delivery must not run a task that was paused, or deleted
-        // and recreated under the same id, while it waited for its turn.
-        if (webhook !== undefined && (!active.enabled || active.createdAt !== task.createdAt)) {
-          return yield* taskError("The task was paused or replaced before this delivery ran.", {
-            taskId: task.id,
-          });
+        // A queued delivery must not run a task that was paused, deleted and
+        // recreated under the same id, or switched to another trigger while
+        // it waited for its turn.
+        if (webhook !== undefined) {
+          const reason =
+            active.createdAt !== task.createdAt
+              ? "The task was replaced before this delivery ran."
+              : active.schedule.type !== "webhook"
+                ? "The task's trigger changed before this delivery ran."
+                : !active.enabled
+                  ? "The task was paused before this delivery ran."
+                  : null;
+          if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
         yield* markRunning(active.id, startedAtIso);
@@ -861,9 +879,10 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         due,
         ({ task, dueAt }) =>
-          (isMissedFixedTimeRun(task.schedule, dueAt, now)
-            ? rescheduleMissedRun(task, now)
-            : runTask(task, "scheduled")
+          Effect.suspend(() =>
+            isMissedFixedTimeRun(task.schedule, dueAt, now)
+              ? rescheduleMissedRun(task, now)
+              : runTask(task, "scheduled"),
           ).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
@@ -1483,6 +1502,9 @@ export const layer = Layer.effect(
                 completed.lastRunStatus === "failed"
                   ? markDeliveryFailed(deliveryId, "The run failed to start.")
                   : Effect.void,
+              ),
+              Effect.catchTag("WebhookDeliverySkipped", (skipped) =>
+                markDeliveryFailed(deliveryId, skipped.reason),
               ),
               // The log is readable over RPC, so it gets a fixed reason; the
               // cause, which can carry request data, stays in the server log.
