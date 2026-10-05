@@ -21,7 +21,7 @@ GH = "/opt/homebrew/bin/gh"
 
 
 def command(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=300).strip()
+    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=1800 if "download" in args else 300).strip()
 
 
 def validate_archive(archive, metadata):
