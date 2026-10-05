@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GH_REPO/actions/workflows" --paginate --jq '.workflows[] | select(.path != ".github/workflows/personal-sync.yml" and .path != ".github/workflows/personal-build.yml") | .id' |
+          gh api "repos/$GH_REPO/actions/workflows" --paginate --jq '.workflows[] | select(.state == "active" and .path != ".github/workflows/personal-sync.yml" and .path != ".github/workflows/personal-build.yml") | .id' |
           while read -r workflow_id; do
             gh api --method PUT "repos/$GH_REPO/actions/workflows/$workflow_id/disable"
           done
