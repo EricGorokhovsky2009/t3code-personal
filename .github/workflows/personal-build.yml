@@ -2,6 +2,11 @@ name: Personal Mac build
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        type: string
+        description: Source commit to build; defaults to the selected branch
+        required: false
   workflow_call:
     inputs:
       ref:
@@ -74,6 +79,25 @@ jobs:
         run: |
           set -euo pipefail
           T3CODE_DESKTOP_SIGNED="$SIGNED" node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --build-version "$PERSONAL_VERSION"
+      - name: Write local-update metadata
+        env:
+          SOURCE_COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from "node:fs";
+          import crypto from "node:crypto";
+          const files = fs.readdirSync("release").filter(name => name.endsWith("-arm64.zip"));
+          if (files.length !== 1) throw new Error("Expected one Mac ARM64 application archive");
+          const filename = files[0];
+          const data = fs.readFileSync(`release/${filename}`);
+          fs.writeFileSync("release/personal-update.json", JSON.stringify({
+            version: process.env.PERSONAL_VERSION,
+            commit: process.env.SOURCE_COMMIT,
+            filename,
+            size: data.length,
+            sha512: crypto.createHash("sha512").update(data).digest("base64"),
+          }));
+          JS
       - name: Save installer for review
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -83,6 +107,7 @@ jobs:
             release/*.zip
             release/*.yml
             release/*.blockmap
+            release/personal-update.json
           if-no-files-found: error
           retention-days: 14
 
