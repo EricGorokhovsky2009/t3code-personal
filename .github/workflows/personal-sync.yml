@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: personal-upstream-sync
@@ -17,6 +18,11 @@ jobs:
     if: github.repository == 'EricGorokhovsky2009/t3code-personal'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
+      T3CODE_RELAY_URL: ${{ vars.T3CODE_RELAY_URL }}
     outputs:
       changed: ${{ steps.merge.outputs.changed }}
       commit: ${{ steps.commit.outputs.commit }}
@@ -66,6 +72,11 @@ jobs:
           vp test run packages/client-runtime/src/state/projectGrouping.test.ts packages/client-runtime/src/state/projectEntities.test.ts apps/web/src/environmentGrouping.test.ts
           vp exec tsc --noEmit -p packages/client-runtime/tsconfig.json
           vp exec tsc --noEmit -p apps/web/tsconfig.json
+      - name: Install Linux desktop build dependencies
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libsecret-1-dev pkg-config
       - name: Build before accepting the merge
         if: steps.merge.outputs.changed == 'true'
         run: vp run build:desktop
@@ -81,6 +92,18 @@ jobs:
           git push origin "HEAD:${TARGET_BRANCH}"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo 'Upstream merged after grouping tests, client type checks, and desktop build passed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep inherited publishing workflows disabled
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/workflows" --paginate --jq '.workflows[] | select(.path != ".github/workflows/personal-sync.yml" and .path != ".github/workflows/personal-build.yml") | .id' |
+          while read -r workflow_id; do
+            gh api --method PUT "repos/$GH_REPO/actions/workflows/$workflow_id/disable"
+          done
   build:
     needs: sync
     if: needs.sync.outputs.changed == 'true'
