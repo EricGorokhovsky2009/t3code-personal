@@ -122,7 +122,7 @@ function deriveRepositoryScopedKey(
 export function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratchProject"
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
@@ -131,6 +131,10 @@ export function deriveLogicalProjectKey(
   const groupingMode = options?.groupingMode ?? "repository";
   if (groupingMode === "separate") {
     return derivePhysicalProjectKey(project);
+  }
+
+  if (project.isScratchProject) {
+    return "t3:scratch";
   }
 
   return (
@@ -143,7 +147,7 @@ export function deriveLogicalProjectKey(
 export function deriveLogicalProjectKeyFromSettings(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratchProject"
   >,
   settings: ProjectGroupingSettings,
 ): string {

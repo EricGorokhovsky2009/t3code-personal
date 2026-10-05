@@ -117,6 +117,65 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  const scratchProjects = [
+    makeProject("mac-scratch", "/Users/eric/.t3/scratch", {
+      title: "No project",
+      repositoryIdentity: null,
+      isScratchProject: true,
+      environmentId: EnvironmentId.make("mac"),
+    }),
+    makeProject("gram-scratch", "/home/eric/.t3/scratch", {
+      title: "No project",
+      repositoryIdentity: null,
+      isScratchProject: true,
+      environmentId: EnvironmentId.make("gram"),
+    }),
+  ];
+
+  it("groups built-in scratch projects and retains both environment targets", () => {
+    for (const mode of ["repository", "repository_path"] as const) {
+      const groups = buildProjectGroups({
+        projects: scratchProjects,
+        settings: settings(mode),
+        preferredEnvironmentId: EnvironmentId.make("gram"),
+      });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.label).toBe("No project");
+      expect(groups[0]?.representative.environmentId).toBe("gram");
+      expect(groups[0]?.memberProjectRefs).toEqual([
+        { environmentId: "mac", projectId: "mac-scratch" },
+        { environmentId: "gram", projectId: "gram-scratch" },
+      ]);
+    }
+  });
+
+  it("honors separate mode and per-machine overrides for scratch projects", () => {
+    expect(
+      buildProjectGroups({ projects: scratchProjects, settings: settings("separate") }),
+    ).toHaveLength(2);
+    expect(
+      buildProjectGroups({
+        projects: scratchProjects,
+        settings: settings("repository", {
+          [derivePhysicalProjectKey(scratchProjects[0]!)]: "separate",
+        }),
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("does not merge ordinary projects named No project with scratch", () => {
+    const ordinary = makeProject("ordinary", "/work/No project", {
+      title: "No project",
+      repositoryIdentity: null,
+    });
+    expect(
+      buildProjectGroups({
+        projects: [...scratchProjects, ordinary],
+        settings: settings("repository"),
+      }),
+    ).toHaveLength(2);
+  });
+
   it("preserves every physical clone as a selectable member in repository modes", () => {
     const projects = [
       makeProject("t3code", "/work/t3code"),

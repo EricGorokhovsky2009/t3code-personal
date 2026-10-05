@@ -1,0 +1,90 @@
+name: Personal upstream sync
+
+on:
+  schedule:
+    - cron: "27 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'EricGorokhovsky2009/t3code-personal'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+      commit: ${{ steps.commit.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          submodules: false
+      - name: Merge upstream without replacing personal commits
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Personal T3 sync'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git main
+          upstream_commit="$(git rev-parse FETCH_HEAD)"
+          if git merge-base --is-ancestor "$upstream_commit" HEAD; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Already current with upstream.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! git merge --no-ff --no-commit "$upstream_commit"; then
+            {
+              echo '### Upstream merge needs review'
+              echo 'The personal branch was not changed. Resolve these conflicts before the next sync:'
+              git diff --name-only --diff-filter=U
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+            exit 1
+          fi
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+      - name: Setup Vite+
+        if: steps.merge.outputs.changed == 'true'
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - name: Install build dependencies
+        if: steps.merge.outputs.changed == 'true'
+        run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - name: Check personal grouping and client types
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          vp test run packages/client-runtime/src/state/projectGrouping.test.ts packages/client-runtime/src/state/projectEntities.test.ts apps/web/src/environmentGrouping.test.ts
+          vp exec tsc --noEmit -p packages/client-runtime/tsconfig.json
+          vp exec tsc --noEmit -p apps/web/tsconfig.json
+      - name: Build before accepting the merge
+        if: steps.merge.outputs.changed == 'true'
+        run: vp run build:desktop
+      - name: Publish checked merge
+        if: steps.merge.outputs.changed == 'true'
+        id: commit
+        env:
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git commit --no-verify -m 'Merge upstream T3 Code'
+          git push origin "HEAD:${TARGET_BRANCH}"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo 'Upstream merged after grouping tests, client type checks, and desktop build passed.' >> "$GITHUB_STEP_SUMMARY"
+  build:
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+    uses: ./.github/workflows/personal-build.yml
+    with:
+      ref: ${{ needs.sync.outputs.commit }}
+    secrets: inherit

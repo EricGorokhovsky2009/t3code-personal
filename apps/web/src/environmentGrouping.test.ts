@@ -52,6 +52,41 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("environment grouping", () => {
+  it("offers one No project choice with Mac and Gram execution targets", () => {
+    const mac = makeProject({
+      title: "No project",
+      workspaceRoot: "/Users/eric/.t3/scratch",
+      isScratchProject: true,
+    });
+    const gram = makeProject({
+      id: ProjectId.make("gram-scratch"),
+      environmentId: remoteEnvironmentId,
+      title: "No project",
+      workspaceRoot: "/home/eric/.t3/scratch",
+      isScratchProject: true,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [mac, gram],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (id) => (id === primaryEnvironmentId ? "Mac" : "Gram"),
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.displayName).toBe("No project");
+    expect(groups[0]?.environmentPresence).toBe("mixed");
+    expect(groups[0]?.memberProjects.map((p) => p.environmentLabel)).toEqual(["Mac", "Gram"]);
+    const entries = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: {
+        environmentId: remoteEnvironmentId,
+        projectId: gram.id,
+      },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.targetProject.id).toBe(gram.id);
+    expect(entries[0]?.targetProject.environmentId).toBe(remoteEnvironmentId);
+  });
+
   it("groups matching repository identities across environments", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({

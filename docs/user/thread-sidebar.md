@@ -23,6 +23,10 @@ list. It starts on your current machine; before sending, pick another machine
 from the machine menu to move it there. To move a draft into a project, pick the
 project in the heading.
 
+When project grouping is enabled, **No project** appears once across connected
+machines. Select its environment to choose where a new thread runs. Existing
+threads and their files stay on the machine that created them.
+
 Each thread without a project works in its own folder under `~/.t3/scratch` (the
 `scratch` folder of your T3 data directory), named after its date, the first words
 of its first message, and a short id, like

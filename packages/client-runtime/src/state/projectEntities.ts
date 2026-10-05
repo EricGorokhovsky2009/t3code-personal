@@ -4,11 +4,13 @@ import type {
   OrchestrationV2ShellSnapshot,
   ProjectId,
   ScopedProjectRef,
+  ServerConfig,
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentProject } from "./models.ts";
 import { scopeProject } from "./models.ts";
+import { isScratchProject } from "./projects.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { arrayElementsEqual, parseProjectKey, projectKey, projectRefsEqual } from "./entities.ts";
 
@@ -17,6 +19,9 @@ const EMPTY_PROJECT_INDEX: ReadonlyMap<ProjectId, OrchestrationProjectShell> = n
 
 export function createEnvironmentProjectAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
+  readonly serverConfigValueAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<Pick<ServerConfig, "scratchWorkspaceRoot"> | null>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
@@ -57,13 +62,17 @@ export function createEnvironmentProjectAtoms(input: {
     const ref = parseProjectKey(key);
     let previousSource: OrchestrationProjectShell | null = null;
     let previousValue: EnvironmentProject | null = null;
+    let previousIsScratch = false;
     return Atom.make((get) => {
       const source = get(environmentProjectIndexAtom(ref.environmentId)).get(ref.projectId) ?? null;
-      if (source === previousSource) {
+      const scratchRoot = get(input.serverConfigValueAtom(ref.environmentId))?.scratchWorkspaceRoot;
+      const isScratch = source !== null && isScratchProject(source, scratchRoot);
+      if (source === previousSource && isScratch === previousIsScratch) {
         return previousValue;
       }
       previousSource = source;
-      previousValue = source === null ? null : scopeProject(ref.environmentId, source);
+      previousIsScratch = isScratch;
+      previousValue = source === null ? null : scopeProject(ref.environmentId, source, isScratch);
       return previousValue;
     }).pipe(Atom.withLabel(`environment-project:${key}`));
   });

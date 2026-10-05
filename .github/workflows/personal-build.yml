@@ -1,0 +1,108 @@
+name: Personal Mac build
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-mac-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'EricGorokhovsky2009/t3code-personal'
+    runs-on: ${{ fromJSON(vars.PERSONAL_MAC_RUNNER || '["macos-15"]') }}
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+    env:
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+      T3CODE_DESKTOP_PRODUCT_NAME: T3 Code (Personal)
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.T3CODE_CLERK_PASSKEY_RP_DOMAINS }}
+      T3CODE_RELAY_URL: ${{ vars.T3CODE_RELAY_URL }}
+      CSC_NAME: ${{ vars.CSC_NAME }}
+      T3CODE_APPLE_TEAM_ID: ${{ vars.T3CODE_APPLE_TEAM_ID }}
+      T3CODE_MACOS_PROVISIONING_PROFILE: ${{ vars.T3CODE_MACOS_PROVISIONING_PROFILE }}
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Install build dependencies
+        run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - name: Set personal version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_version="$(node -p "require('./apps/desktop/package.json').version.split('-')[0]")"
+          version="${base_version}-nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          node scripts/update-release-package-versions.ts "$version"
+          echo "PERSONAL_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build Mac installer
+        shell: bash
+        env:
+          SIGNED: ${{ vars.PERSONAL_MAC_SIGNING_READY == 'true' }}
+        run: |
+          set -euo pipefail
+          T3CODE_DESKTOP_SIGNED="$SIGNED" node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --build-version "$PERSONAL_VERSION"
+      - name: Save installer for review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: personal-mac-${{ env.PERSONAL_VERSION }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: vars.PERSONAL_MAC_SIGNING_READY == 'true' && vars.PERSONAL_RELEASES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: personal-mac-${{ needs.build.outputs.version }}
+          path: release
+      - name: Publish personal update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ needs.build.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f release/nightly-mac.yml
+          gh release create "v${VERSION}" release/* --target "$COMMIT" --prerelease --title "Personal T3 Code ${VERSION}" --notes 'Personal build with upstream T3 Code changes and local customizations.'
