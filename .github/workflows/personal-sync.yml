@@ -66,10 +66,11 @@ jobs:
       - name: Install build dependencies
         if: steps.merge.outputs.changed == 'true'
         run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
-      - name: Check personal grouping and client types
+      - name: Check personal patches and client types
         if: steps.merge.outputs.changed == 'true'
         run: |
           vp test run packages/client-runtime/src/state/projectGrouping.test.ts packages/client-runtime/src/state/projectEntities.test.ts apps/web/src/environmentGrouping.test.ts
+          vp test run packages/contracts/src/chatAttachment.test.ts apps/server/src/assets/AttachmentUpload.test.ts apps/server/src/environment/ServerEnvironment.test.ts scripts/build-desktop-artifact.test.ts
           vp exec tsc --noEmit -p packages/client-runtime/tsconfig.json
           vp exec tsc --noEmit -p apps/web/tsconfig.json
       - name: Install Linux desktop build dependencies
@@ -91,7 +92,7 @@ jobs:
           git commit --no-verify -m 'Merge upstream T3 Code'
           git push origin "HEAD:${TARGET_BRANCH}"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo 'Upstream merged after grouping tests, client type checks, and desktop build passed.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Upstream merged after personal regression tests, client type checks, and desktop build passed.' >> "$GITHUB_STEP_SUMMARY"
       - name: Keep inherited publishing workflows disabled
         if: steps.merge.outputs.changed == 'true'
         env:

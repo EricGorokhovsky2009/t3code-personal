@@ -4,7 +4,7 @@ import {
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { createEnvironmentProjectAtoms } from "./projectEntities.ts";

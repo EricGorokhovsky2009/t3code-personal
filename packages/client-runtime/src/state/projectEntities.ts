@@ -6,7 +6,7 @@ import type {
   ScopedProjectRef,
   ServerConfig,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentProject } from "./models.ts";
 import { scopeProject } from "./models.ts";
