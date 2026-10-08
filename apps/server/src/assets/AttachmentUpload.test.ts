@@ -182,6 +182,38 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("streams files larger than 50 MB without buffering the whole upload", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const chunk = new Uint8Array(1024 * 1024).fill(42);
+      const sizeBytes = chunk.byteLength * 64;
+      const issued = yield* issueAttachmentUploadUrl({
+        type: "file",
+        name: "textbook.pdf",
+        mimeType: "application/pdf",
+        sizeBytes,
+      });
+      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+      const claims = yield* validateAttachmentUploadToken(token);
+      if (!claims) {
+        throw new Error("Expected valid upload claims for a file larger than 50 MB.");
+      }
+      expect(
+        yield* storeAttachmentUpload(
+          claims,
+          Stream.fromIterable(Array.from({ length: 64 }, () => chunk)),
+        ),
+      ).toEqual({ ok: true });
+      const filePath = NodePath.join(config.attachmentsDir, `${issued.attachmentId}.pdf`);
+      expect(NodeFS.statSync(filePath).size).toBe(sizeBytes);
+      expect(NodeFS.readdirSync(config.attachmentsDir).some((name) => name.endsWith(".part"))).toBe(
+        false,
+      );
+      yield* deletePendingAttachment(issued.attachmentId);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("removes partial streamed uploads that exceed their signed size", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

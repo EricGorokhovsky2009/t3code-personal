@@ -1,6 +1,8 @@
 name: Personal Mac build
 
 on:
+  push:
+    branches: [personal]
   workflow_dispatch:
     inputs:
       ref:
@@ -22,7 +24,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'EricGorokhovsky2009/t3code-personal'
+    if: github.repository == 'EricGorokhovsky2009/t3code-personal' && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge upstream T3 Code'))
     runs-on: ${{ fromJSON(vars.PERSONAL_MAC_RUNNER || '["macos-15"]') }}
     timeout-minutes: 60
     outputs:

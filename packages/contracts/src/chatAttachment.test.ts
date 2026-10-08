@@ -29,6 +29,19 @@ it.effect("tolerates attachment types from newer builds", () =>
   }),
 );
 
+it.effect("accepts generic files larger than 50 MB on persisted messages", () =>
+  Effect.gen(function* () {
+    const attachment = yield* decodeAttachment({
+      type: "file",
+      id: "thread-1-00000000-0000-4000-8000-000000000003-pdf",
+      name: "textbook.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 512 * 1024 * 1024,
+    });
+    assert.strictEqual(attachment.sizeBytes, 512 * 1024 * 1024);
+  }),
+);
+
 // The tolerant member must not catch malformed known attachments: a file over
 // the size cap or an image with a bad mime has to fail its own schema, not
 // slide through the open one with those constraints unchecked.
