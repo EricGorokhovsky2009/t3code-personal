@@ -4,8 +4,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Fiber from "effect/Fiber";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -54,6 +54,16 @@ const layerHttpClient = (bytes: Uint8Array) =>
         HttpClientResponse.fromWeb(request, new Response(bytes.buffer as ArrayBuffer)),
       ),
     ),
+  );
+
+// Records each request and never responds, simulating a wedged endpoint.
+const layerStalledHttpClient = (requests: Array<unknown>) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push(request);
+      return Effect.never;
+    }),
   );
 
 // Answers `cloudflared version` with the version recorded for that path, which
@@ -154,6 +164,133 @@ const managedDirectory = (baseDir: string, platform: NodeJS.Platform) =>
   `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/${platform}-x64`;
 
 describe("RelayClient", () => {
+  it.effect("cancels a contended install without removing the other installer's lock", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cloudflared-test-" });
+      const directory = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64`;
+      const lockPath = `${directory}/cloudflared.lock`;
+      yield* fileSystem.makeDirectory(directory, { recursive: true });
+      yield* fileSystem.writeFileString(lockPath, "other-installer");
+      const contended = yield* Deferred.make<void>();
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          writeFileString: (path, contents, options) =>
+            fileSystem
+              .writeFileString(path, contents, options)
+              .pipe(
+                Effect.tapError(() =>
+                  path === lockPath ? Deferred.succeed(contended, undefined) : Effect.void,
+                ),
+              ),
+        }),
+      );
+      const installing = yield* manager.install.pipe(Effect.forkChild);
+      yield* Deferred.await(contended);
+      yield* Fiber.interrupt(installing);
+      expect(yield* fileSystem.readFileString(lockPath)).toBe("other-installer");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerHttpClient(new Uint8Array()),
+          layerSpawner([]),
+          layerHostRuntime({ PATH: "" }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("releases the install lock when a download is cancelled", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cloudflared-test-" });
+      const lockPath = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared.lock`;
+      const downloading = yield* Deferred.make<void>();
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
+      const installing = yield* manager
+        .installWithProgress((event) =>
+          event.type === "progress" && event.stage === "downloading"
+            ? Deferred.succeed(downloading, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(downloading);
+      expect(yield* fileSystem.exists(lockPath)).toBe(true);
+      yield* Fiber.interrupt(installing);
+      expect(yield* fileSystem.exists(lockPath)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerHttpClient(new Uint8Array()),
+          layerSpawner([]),
+          layerHostRuntime({ PATH: "" }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.skipIf(windowsHost)("releases a lock acquired while installation is cancelled", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cloudflared-test-" });
+      const lockPath = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared.lock`;
+      const acquired = yield* Deferred.make<void>();
+      const completeWrite = yield* Deferred.make<void>();
+      let pauseWrite = true;
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: {
+          url: "https://example.test/cloudflared",
+          sha256: Hex.encode(sha256(new TextEncoder().encode("test-binary"))),
+          archive: "binary",
+        },
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          writeFileString: (path, contents, options) =>
+            fileSystem
+              .writeFileString(path, contents, options)
+              .pipe(
+                Effect.tap(() =>
+                  path === lockPath && pauseWrite
+                    ? Deferred.succeed(acquired, undefined).pipe(
+                        Effect.andThen(Deferred.await(completeWrite)),
+                      )
+                    : Effect.void,
+                ),
+              ),
+        }),
+      );
+
+      const installing = yield* manager.install.pipe(Effect.forkChild);
+      yield* Deferred.await(acquired);
+      const cancelling = yield* Fiber.interrupt(installing).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(completeWrite, undefined);
+      yield* Fiber.join(cancelling);
+      expect(yield* fileSystem.exists(lockPath)).toBe(false);
+
+      pauseWrite = false;
+      expect(yield* manager.install).toMatchObject({ status: "available" });
+      expect(yield* fileSystem.exists(lockPath)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerHttpClient(new TextEncoder().encode("test-binary")),
+          layerSpawner([]),
+          layerHostRuntime({ PATH: "" }),
+        ),
+      ),
+    ),
+  );
   it.effect.skipIf(windowsHost)(
     "resolves explicit overrides before managed and PATH executables",
     () =>
@@ -274,6 +411,11 @@ describe("RelayClient", () => {
       const error = yield* manager.install.pipe(Effect.flip);
       expect(error).toBeInstanceOf(RelayClient.RelayClientInstallError);
       expect(error.reason).toBe("invalid_checksum");
+      expect(
+        yield* fileSystem.exists(
+          `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared.lock`,
+        ),
+      ).toBe(false);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -634,4 +776,44 @@ describe("RelayClient", () => {
       expect(renames.attempts).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime(platform))),
   );
+
+  it.effect("fails a stalled download after the download timeout", () => {
+    const requests: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: {
+          url: "https://example.test/cloudflared",
+          sha256: "00".repeat(32),
+          archive: "binary",
+        },
+      });
+
+      const child = yield* Effect.forkChild(manager.install);
+      // Spin until the wedged download is in flight, so the clock
+      // adjustment below cannot run before the timeout is armed.
+      while (requests.length === 0) {
+        yield* Effect.yieldNow;
+      }
+      // The download timeout is 10 minutes; advance past it.
+      yield* TestClock.adjust("11 minutes");
+      const error = yield* Fiber.join(child).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(RelayClient.RelayClientInstallError);
+      expect(error.reason).toBe("download_failed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerStalledHttpClient(requests),
+          layerSpawner([]),
+          layerHostRuntime({ PATH: "" }),
+        ),
+      ),
+    );
+  });
 });
