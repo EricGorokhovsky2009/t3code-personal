@@ -1426,7 +1426,26 @@ const program = Effect.gen(function* () {
           },
         });
         if (exitAfterRunningCommandLaunch) {
-          yield* Effect.sleep("100 millis");
+          if (runningCommandPidPath !== undefined) {
+            // Let the detached fixture publish its children before provider-exit cleanup runs.
+            yield* Effect.promise(
+              () =>
+                new Promise<void>((resolve, reject) => {
+                  const check = () => {
+                    const ids = NodeFS.readFileSync(runningCommandPidPath, "utf8")
+                      .trim()
+                      .split(/\s+/)
+                      .filter(Boolean);
+                    if (ids.length !== (runningCommandSeparateSession ? 3 : 2)) return;
+                    watcher.close();
+                    resolve();
+                  };
+                  const watcher = NodeFS.watch(runningCommandPidPath, check);
+                  watcher.on("error", reject);
+                  check();
+                }),
+            );
+          }
           return yield* Effect.sync(() => process.exit(0));
         }
         // Stay open until session/cancel so interrupt tests can observe a running tool.
