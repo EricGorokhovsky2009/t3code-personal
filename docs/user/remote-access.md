@@ -64,11 +64,14 @@ another link to share.
 
 ### Reach one machine several ways
 
-A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or
-T3 Connect. To add one, choose **Add route** in the machine's route list, or
-next to it in the T3 Connect list. Pairing the same machine again over another
-address also adds a route instead of a second machine. A new route is placed by
-speed, in that order, and you can reorder routes at any time.
+A machine can have more than one route: LAN, Tailscale, another VPN, a public
+URL, SSH, or T3 Connect. Tailscale shares its `100.64.0.0/10` address range with
+other VPNs such as Cloudflare WARP, so an address in that range shows as VPN
+unless the machine confirms it is on Tailscale. To add a route, choose **Add
+route** in the machine's route list, or next to it in the T3 Connect list.
+Pairing the same machine again over another address also adds a route instead
+of a second machine. A new route is placed by speed, in that order, and you can
+reorder routes at any time.
 
 While connected through T3 Connect or a paired address, T3 Code also learns the
 machine's current LAN and Tailscale addresses and adds them as routes, so
@@ -302,42 +305,882 @@ asking you to update. Start T3 Code on that computer and update it to the latest
 version; it reconnects at the same address without pairing again.
 
 On a command-line host, `t3 connect unlink` disables exposure while retaining
-your login; `t3 connect logout` also clears that login. Background-service
-[removal](./background-service.md#manage-the-service) is separate.
+your logi…54477 tokens truncated… /**
+   * The mirror of {@link ServerProviderSkill.userInvocationOnly}: Claude Code's
+   * `user-invocable: false` keeps the skill out of its own slash commands, so
+   * only the agent can start it. Composers must not offer it under `/`.
+   */
+  userInvocable: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
-Treat pairing URLs and authorization codes as passwords. Do not include them in
-screenshots, logs, or bug reports.
+export const ServerProviderWorkspaceSnapshot = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  checkedAt: IsoDateTime,
+  slashCommands: Schema.Array(ServerProviderSlashCommand),
+  /** Skills are available, but command discovery still needs a retry. */
+  slashCommandsPending: Schema.optional(Schema.Boolean),
+  skills: Schema.Array(ServerProviderSkill),
+});
+export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
-## T3 Connect troubleshooting
+/**
+ * How long a workspace's skill and command scan stays current. Nothing watches
+ * skill directories, so a composer opened after this rescans on use, and the
+ * server answers repeat requests inside the window from its cache.
+ */
+export const PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS = 5 * 60_000;
 
-Run `t3 connect status` on the host to inspect saved authorization and link
-configuration. It is not a live reachability check. If the environment appears
-offline, run `t3 service status` and read the displayed log. If it disappears
-when SSH closes, see [background-service troubleshooting](./background-service.md#troubleshooting).
+export function isProviderWorkspaceSnapshotCurrent(
+  snapshot: Pick<ServerProviderWorkspaceSnapshot, "checkedAt">,
+  nowMs: number,
+): boolean {
+  return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
+}
 
-| Error                                                     | Recovery                                                                                                                                    |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment, then restart T3 Code on the host.                                                                         |
-| `auth_invalid` or `invalid_bearer`                        | Run `t3 connect login`. If credentials were revoked, run `t3 connect logout`, then `t3 connect` again. Restart the server after signing in. |
-| Expired or invalid link proof                             | Check the host's date and time, update T3 Code, then restart it.                                                                            |
-| HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                               |
-| HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                             |
+/**
+ * Availability of a configured provider instance from the runtime's POV.
+ *
+ *  - `available` — the build ships this driver and an instance is wired
+ *    up. Default for legacy snapshots produced from the closed
+ *    `ServerSettings.providers` map.
+ *  - `unavailable` — the user's `ServerSettings.providerInstances` (or a
+ *    persisted thread / session binding) references a driver this build
+ *    doesn't ship. Common after rolling back from a fork or PR branch
+ *    that introduced a new driver. The snapshot is preserved so the UI
+ *    can render "missing driver" affordances and so the data round-trips
+ *    when the user moves back to the fork.
+ *
+ * Snapshots with `availability: "unavailable"` MUST set
+ * `installed: false` and `enabled: false`; the runtime refuses turn
+ * starts against them with a structured error.
+ */
+export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
+export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
 
-After fixing a permanent rejection, restart the host's server. On Linux, use
-`systemctl --user restart t3code.service` for the background service. For a
-foreground server, stop it and run `t3 serve` again with your usual options.
-Include the diagnostic message and trace ID when reporting a persistent failure.
+export const ServerProviderContinuation = Schema.Struct({
+  groupKey: TrimmedNonEmptyString,
+});
+export type ServerProviderContinuation = typeof ServerProviderContinuation.Type;
 
-For a connection that still fails after linking, check the date and time on both
-devices. For server version warnings, follow [Updating T3 Code](./updating.md).
+export const ServerProviderCompatibilityStatus = Schema.Literals([
+  "unknown",
+  "supported",
+  "graceful",
+  "unsupported",
+  "broken",
+]);
+export const ServerProviderCompatibilityAdvisory = Schema.Struct({
+  status: ServerProviderCompatibilityStatus,
+  latestVersionStatus: Schema.optionalKey(ServerProviderCompatibilityStatus),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  recommendedVersion: Schema.NullOr(TrimmedNonEmptyString),
+  recommendedRange: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerProviderCompatibilityAdvisory = typeof ServerProviderCompatibilityAdvisory.Type;
 
-## Using the Desktop App as a Remote Only
+export const ServerProviderVersionAdvisoryStatus = Schema.Literals([
+  "unknown",
+  "current",
+  "behind_latest",
+]);
+export type ServerProviderVersionAdvisoryStatus = typeof ServerProviderVersionAdvisoryStatus.Type;
 
-If a computer should only drive work running elsewhere, turn off its local environment. In the
-desktop app, open **Settings → Connections** and switch off **Local
-environment**. T3 Code restarts without a local server: no local agents or terminals run, WSL
-backends stay off, and other devices can no longer connect to this computer. Your projects,
-history, and saved connections are kept, and you keep working through pairing, T3 Connect, or SSH.
+export const ServerProviderVersionAdvisory = Schema.Struct({
+  status: ServerProviderVersionAdvisoryStatus,
+  currentVersion: Schema.NullOr(TrimmedNonEmptyString),
+  latestVersion: Schema.NullOr(TrimmedNonEmptyString),
+  updateCommand: Schema.NullOr(TrimmedNonEmptyString),
+  canUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  canInstallVersion: Schema.optionalKey(Schema.Boolean),
+  checkedAt: Schema.NullOr(IsoDateTime),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerProviderVersionAdvisory = typeof ServerProviderVersionAdvisory.Type;
 
-Switch **Local environment** back on in the same place to restart with your previous local
-settings.
+export const ServerProviderUpdateStatus = Schema.Literals([
+  "idle",
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "unchanged",
+]);
+export type ServerProviderUpdateStatus = typeof ServerProviderUpdateStatus.Type;
+
+export const ServerProviderUpdateState = Schema.Struct({
+  status: ServerProviderUpdateStatus,
+  startedAt: Schema.NullOr(IsoDateTime),
+  finishedAt: Schema.NullOr(IsoDateTime),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  output: Schema.NullOr(Schema.String.check(Schema.isMaxLength(10_000))),
+});
+export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
+
+export const ServerProvider = Schema.Struct({
+  // Routing key for the configured instance this snapshot represents. This
+  // is the only stable identity consumers may use for provider routing.
+  instanceId: ProviderInstanceId,
+  // Open driver kind slug that selects the implementation handling this
+  // instance. It is metadata/capability context, not a routing key.
+  driver: ProviderDriverKind,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  accentColor: Schema.optional(TrimmedNonEmptyString),
+  // Optional visual identity supplied by the owning provider driver. Clients
+  // must still validate remote URLs against that driver's trusted origin.
+  iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
+  badgeLabel: Schema.optional(TrimmedNonEmptyString),
+  continuation: Schema.optional(ServerProviderContinuation),
+  showInteractionModeToggle: Schema.optional(Schema.Boolean),
+  // The driver streams context window usage, so a started thread will have a
+  // meter once its activities load. Clients reserve the meter's space on it.
+  reportsContextWindow: Schema.optional(Schema.Boolean),
+  supportedRuntimeModes: Schema.optional(ForwardCompatibleArray(RuntimeMode)),
+  requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  supportsConversationRollback: Schema.optional(Schema.Boolean),
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
+  setup: Schema.optional(
+    Schema.Struct({
+      canAuthenticate: Schema.Boolean,
+      canInstall: Schema.Boolean,
+      documentationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
+    }),
+  ),
+  nativeSessions: Schema.optional(
+    Schema.Struct({
+      canList: Schema.Boolean,
+      canLoad: Schema.Boolean,
+      canResume: Schema.Boolean,
+      canDelete: Schema.optional(Schema.Boolean),
+    }),
+  ),
+  configurableProviders: Schema.optional(Schema.Boolean),
+  runtimePaths: Schema.optionalKey(
+    Schema.Struct({
+      homePath: TrimmedNonEmptyString,
+      shadowHomePath: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+  ),
+  enabled: Schema.Boolean,
+  installed: Schema.Boolean,
+  version: Schema.NullOr(TrimmedNonEmptyString),
+  status: ServerProviderState,
+  auth: ServerProviderAuth,
+  checkedAt: IsoDateTime,
+  message: Schema.optional(TrimmedNonEmptyString),
+  // Optional for back-compat: every legacy producer omits this field and
+  // an absent value is interpreted as `"available"` by consumers (see
+  // `isProviderAvailable`). New `ProviderInstanceRegistry` outputs set it
+  // explicitly so the UI can render unavailable shadows from
+  // `ServerSettings.providerInstances`.
+  availability: Schema.optional(ServerProviderAvailability),
+  // Human-readable reason populated when `availability === "unavailable"`.
+  // Surfaces in the UI alongside the missing-driver affordance.
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
+  models: Schema.Array(ServerProviderModel),
+  // Kept apart from `models` so clients that predate it never offer them.
+  updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
+  slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
+  // Absent when the driver has no notion of subscription usage.
+  usageLimits: Schema.optional(ServerProviderUsageLimits),
+  versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
+  compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
+  updateState: Schema.optionalKey(ServerProviderUpdateState),
+});
+export type ServerProvider = typeof ServerProvider.Type;
+
+// Provider status kinds grow over time (ServerProviderState,
+// ServerProviderAuthStatus, ServerProviderVersionAdvisoryStatus,
+// ServerProviderUpdateStatus); an older client must not fail the whole config
+// decode over one provider it cannot render.
+export const ServerProviders = ForwardCompatibleArray(ServerProvider);
+export type ServerProviders = typeof ServerProviders.Type;
+
+/**
+ * Treat the optional `availability` as "available" when absent. This is
+ * the rule legacy producers (which omit the field) and new producers
+ * (which set it explicitly) agree on so consumers never have to thread
+ * `?? "available"` defaults through their code paths.
+ */
+export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
+  snapshot.availability !== "unavailable";
+
+/**
+ * Treat an absent `supportsTextGeneration` as supported so legacy
+ * producers, which all support application text generation, keep working
+ * without resending the field.
+ */
+export const isProviderTextGenerationCapable = (snapshot: ServerProvider): boolean =>
+  snapshot.supportsTextGeneration !== false;
+
+export const ServerObservability = Schema.Struct({
+  logsDirectoryPath: TrimmedNonEmptyString,
+  localTracingEnabled: Schema.Boolean,
+  otlpTracesUrl: Schema.optional(TrimmedNonEmptyString),
+  otlpTracesEnabled: Schema.Boolean,
+  otlpMetricsUrl: Schema.optional(TrimmedNonEmptyString),
+  otlpMetricsEnabled: Schema.Boolean,
+  otlpLogsUrl: Schema.optional(TrimmedNonEmptyString),
+  // Absent on servers from before the log signal shipped, so a newer client
+  // reads those as having no log export rather than rejecting the whole config.
+  otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type ServerObservability = typeof ServerObservability.Type;
+
+export const ServerTraceDiagnosticsErrorKind = Schema.Literals([
+  "trace-file-not-found",
+  "trace-file-read-failed",
+]);
+export type ServerTraceDiagnosticsErrorKind = typeof ServerTraceDiagnosticsErrorKind.Type;
+
+export const ServerTraceDiagnosticsSpanSummary = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  count: NonNegativeInt,
+  failureCount: NonNegativeInt,
+  totalDurationMs: Schema.Number,
+  averageDurationMs: Schema.Number,
+  maxDurationMs: Schema.Number,
+});
+export type ServerTraceDiagnosticsSpanSummary = typeof ServerTraceDiagnosticsSpanSummary.Type;
+
+export const ServerTraceDiagnosticsFailureSummary = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  cause: TrimmedNonEmptyString,
+  count: NonNegativeInt,
+  lastSeenAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsFailureSummary = typeof ServerTraceDiagnosticsFailureSummary.Type;
+
+export const ServerTraceDiagnosticsRecentFailure = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  cause: TrimmedNonEmptyString,
+  durationMs: Schema.Number,
+  endedAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsRecentFailure = typeof ServerTraceDiagnosticsRecentFailure.Type;
+
+export const ServerTraceDiagnosticsSpanOccurrence = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  durationMs: Schema.Number,
+  endedAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsSpanOccurrence = typeof ServerTraceDiagnosticsSpanOccurrence.Type;
+
+export const ServerTraceDiagnosticsLogEvent = Schema.Struct({
+  spanName: TrimmedNonEmptyString,
+  level: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+  seenAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsLogEvent = typeof ServerTraceDiagnosticsLogEvent.Type;
+
+export const ServerTraceDiagnosticsResult = Schema.Struct({
+  traceFilePath: TrimmedNonEmptyString,
+  scannedFilePaths: Schema.Array(TrimmedNonEmptyString),
+  readAt: Schema.DateTimeUtc,
+  recordCount: NonNegativeInt,
+  parseErrorCount: NonNegativeInt,
+  firstSpanAt: Schema.Option(Schema.DateTimeUtc),
+  lastSpanAt: Schema.Option(Schema.DateTimeUtc),
+  failureCount: NonNegativeInt,
+  interruptionCount: NonNegativeInt,
+  slowSpanThresholdMs: NonNegativeInt,
+  slowSpanCount: NonNegativeInt,
+  logLevelCounts: Schema.Record(TrimmedNonEmptyString, NonNegativeInt),
+  topSpansByCount: Schema.Array(ServerTraceDiagnosticsSpanSummary),
+  slowestSpans: Schema.Array(ServerTraceDiagnosticsSpanOccurrence),
+  commonFailures: Schema.Array(ServerTraceDiagnosticsFailureSummary),
+  latestFailures: Schema.Array(ServerTraceDiagnosticsRecentFailure),
+  latestWarningAndErrorLogs: Schema.Array(ServerTraceDiagnosticsLogEvent),
+  partialFailure: Schema.Option(Schema.Boolean),
+  error: Schema.Option(
+    Schema.Struct({
+      kind: ServerTraceDiagnosticsErrorKind,
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerTraceDiagnosticsResult = typeof ServerTraceDiagnosticsResult.Type;
+
+export const ServerProcessSignal = Schema.Literals(["SIGINT", "SIGKILL"]);
+export type ServerProcessSignal = typeof ServerProcessSignal.Type;
+
+export const ServerProcessDiagnosticsEntry = Schema.Struct({
+  pid: PositiveInt,
+  startTimeMs: NonNegativeInt,
+  ppid: NonNegativeInt,
+  pgid: Schema.Option(Schema.Int),
+  status: TrimmedNonEmptyString,
+  cpuPercent: Schema.Number,
+  rssBytes: NonNegativeInt,
+  elapsed: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  depth: NonNegativeInt,
+  childPids: Schema.Array(PositiveInt),
+});
+export type ServerProcessDiagnosticsEntry = typeof ServerProcessDiagnosticsEntry.Type;
+
+export const ServerProcessDiagnosticsResult = Schema.Struct({
+  serverPid: PositiveInt,
+  readAt: Schema.DateTimeUtc,
+  processCount: NonNegativeInt,
+  totalRssBytes: NonNegativeInt,
+  totalCpuPercent: Schema.Number,
+  processes: Schema.Array(ServerProcessDiagnosticsEntry),
+  error: Schema.Option(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerProcessDiagnosticsResult = typeof ServerProcessDiagnosticsResult.Type;
+
+export const ServerProcessResourceHistoryInput = Schema.Struct({
+  windowMs: NonNegativeInt,
+  bucketMs: NonNegativeInt,
+});
+export type ServerProcessResourceHistoryInput = typeof ServerProcessResourceHistoryInput.Type;
+
+export const ServerProcessResourceHistoryBucket = Schema.Struct({
+  startedAt: Schema.DateTimeUtc,
+  endedAt: Schema.DateTimeUtc,
+  avgCpuPercent: Schema.Number,
+  maxCpuPercent: Schema.Number,
+  maxRssBytes: NonNegativeInt,
+  maxProcessCount: NonNegativeInt,
+});
+export type ServerProcessResourceHistoryBucket = typeof ServerProcessResourceHistoryBucket.Type;
+
+export const ServerProcessResourceHistorySummary = Schema.Struct({
+  processKey: TrimmedNonEmptyString,
+  pid: PositiveInt,
+  ppid: NonNegativeInt,
+  command: TrimmedNonEmptyString,
+  depth: NonNegativeInt,
+  isServerRoot: Schema.Boolean,
+  firstSeenAt: Schema.DateTimeUtc,
+  lastSeenAt: Schema.DateTimeUtc,
+  currentCpuPercent: Schema.Number,
+  avgCpuPercent: Schema.Number,
+  maxCpuPercent: Schema.Number,
+  cpuSecondsApprox: Schema.Number,
+  currentRssBytes: NonNegativeInt,
+  maxRssBytes: NonNegativeInt,
+  sampleCount: NonNegativeInt,
+});
+export type ServerProcessResourceHistorySummary = typeof ServerProcessResourceHistorySummary.Type;
+
+export const ServerProcessResourceHistoryFailureTag = Schema.Literals([
+  "ProcessDiagnosticsQueryTimeoutError",
+  "ProcessDiagnosticsQueryFailedError",
+  "ProcessDiagnosticsServerProcessSignalError",
+  "ProcessDiagnosticsNotDescendantError",
+  "ProcessDiagnosticsSignalFailedError",
+]);
+export type ServerProcessResourceHistoryFailureTag =
+  typeof ServerProcessResourceHistoryFailureTag.Type;
+
+export const ServerProcessResourceHistoryResult = Schema.Struct({
+  readAt: Schema.DateTimeUtc,
+  windowMs: NonNegativeInt,
+  bucketMs: NonNegativeInt,
+  sampleIntervalMs: NonNegativeInt,
+  retainedSampleCount: NonNegativeInt,
+  totalCpuSecondsApprox: Schema.Number,
+  buckets: Schema.Array(ServerProcessResourceHistoryBucket),
+  topProcesses: Schema.Array(ServerProcessResourceHistorySummary),
+  error: Schema.Option(
+    Schema.Struct({
+      failureTag: ServerProcessResourceHistoryFailureTag,
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerProcessResourceHistoryResult = typeof ServerProcessResourceHistoryResult.Type;
+
+export const ServerSignalProcessInput = Schema.Struct({
+  pid: PositiveInt,
+  startTimeMs: NonNegativeInt,
+  signal: ServerProcessSignal,
+});
+export type ServerSignalProcessInput = typeof ServerSignalProcessInput.Type;
+
+export const ServerSignalProcessResult = Schema.Struct({
+  pid: PositiveInt,
+  signal: ServerProcessSignal,
+  signaled: Schema.Boolean,
+  message: Schema.Option(TrimmedNonEmptyString),
+});
+export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
+
+/**
+ * A palette the environment's machine publishes for T3 Code to follow, read
+ * from a theme file next to the rest of the environment's state. Two seed
+ * colors rather than a full palette: clients derive the remaining roles with
+ * the same generator the guided theme editor uses, so a desktop theme carries
+ * over as a coherent T3 Code palette instead of a foreign one.
+ */
+export const EnvironmentThemeColor = Schema.String.check(
+  Schema.isPattern(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/),
+);
+export type EnvironmentThemeColor = typeof EnvironmentThemeColor.Type;
+
+/**
+ * Matches the client-side theme id rule, so a published id is selectable.
+ * The appearance keywords are excluded outright: a published `dark.json`
+ * would otherwise capture every client whose stored preference is the stock
+ * `"dark"`, retinting people who never chose it.
+ */
+export const EnvironmentThemeId = Schema.String.check(
+  Schema.isPattern(/^(?!(?:system|light|dark)$)[a-z0-9](?:[a-z0-9-]{0,47})$/),
+);
+export type EnvironmentThemeId = typeof EnvironmentThemeId.Type;
+
+/**
+ * Role colors as published. Values are any CSS color the client's theme
+ * parser accepts (exported theme files use oklch), canonicalized client-side;
+ * roles a build does not know are dropped there, so a machine may publish
+ * roles a newer client added without breaking an older one. Keys must still
+ * be role-shaped and values color-sized, so the record stays open to future
+ * vocabulary without being an arbitrary-payload channel.
+ */
+const EnvironmentThemeColors = Schema.Record(
+  Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)),
+  TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+);
+
+const environmentThemeFields = {
+  /**
+   * Standard exported theme files (the Download button's output) carry
+   * `version: 1`; the seeded short form a desktop generates has no version.
+   */
+  version: Schema.optional(Schema.Literal(1)),
+  /** Shown on the theme card, e.g. the desktop theme's own name. */
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
+  appearance: Schema.Literals(["light", "dark"]),
+  /**
+   * Seed colors. When present, clients derive the full palette from them with
+   * the guided theme editor's generator and layer `colors` on top; when
+   * absent, `colors` is the palette, as in an exported theme file.
+   */
+  canvas: Schema.optional(EnvironmentThemeColor),
+  accent: Schema.optional(EnvironmentThemeColor),
+  colors: Schema.optional(EnvironmentThemeColors),
+  /** The other appearance's palette, as exported theme files carry it. */
+  variants: Schema.optional(
+    Schema.Struct({
+      light: Schema.optional(EnvironmentThemeColors),
+      dark: Schema.optional(EnvironmentThemeColors),
+    }),
+  ),
+};
+
+/** One published theme file. The id is the filename, not part of the content,
+ * so a file cannot claim another file's identity; an embedded `id` is ignored. */
+export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
+export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
+
+export const EnvironmentTheme = Schema.Struct({
+  /** The publishing filename without its extension, stable across recolors. */
+  id: EnvironmentThemeId,
+  ...environmentThemeFields,
+});
+export type EnvironmentTheme = typeof EnvironmentTheme.Type;
+
+/**
+ * Whether a theme file carries anything to render. A file with neither seeds
+ * nor colors would show as the stock palette wearing a name, which reads as a
+ * bug rather than a theme — the CLI and the server watcher both reject it,
+ * through this one predicate so they cannot drift.
+ */
+export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boolean {
+  return (
+    (file.canvas !== undefined && file.accent !== undefined) ||
+    (file.colors !== undefined && Object.keys(file.colors).length > 0)
+  );
+}
+
+/**
+ * "tailnet" when the address is on this machine's Tailscale interface, "lan"
+ * for any other private address, including other VPNs in 100.64.0.0/10.
+ */
+export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
+export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
+
+export const ServerDirectEndpoint = Schema.Struct({
+  kind: ServerDirectEndpointKind,
+  httpBaseUrl: TrimmedNonEmptyString,
+});
+export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
+
+export const ServerConfig = Schema.Struct({
+  environment: ExecutionEnvironmentDescriptor,
+  auth: ServerAuthDescriptor,
+  cwd: TrimmedNonEmptyString,
+  keybindingsConfigPath: TrimmedNonEmptyString,
+  keybindings: ResolvedKeybindingsConfig,
+  issues: ServerConfigIssues,
+  providers: ServerProviders,
+  // Editor ids grow over time; drop ones this build does not know rather than
+  // failing the whole config decode.
+  availableEditors: ForwardCompatibleArray(EditorId),
+  /**
+   * SSH hosts this environment advertises for remote open-in-editor links.
+   * Absent on servers that predate the feature; empty when the machine has no
+   * sshd or no advertisable name.
+   */
+  remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
+  /**
+   * Direct addresses this server listens on right now (LAN and tailnet), so a
+   * client connected one way can learn the others. Hints only: the client
+   * checks each address answers as this environment before using it. Absent on
+   * servers that predate the feature; empty when bound to loopback only.
+   */
+  directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
+  observability: ServerObservability,
+  settings: ServerSettings,
+  /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
+  shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /** Whether shell.openInEditor honors `LaunchEditorInput.reveal` for the
+      file-manager editor. */
+  shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
+  /** File-manager wording clients should use for reveal actions. */
+  shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
+  /** Whether thread subscriptions can emit an opt-in catch-up completion marker. */
+  threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Whether thread detail reads accept a turn window (`turnLimit`/
+   * `beforeCursor`) and return `page` metadata. Clients must not send window
+   * fields to servers that don't advertise this.
+   */
+  threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
+  /** Whether thread reads accept the reasoningMessages opt-in. */
+  reasoningMessages: Schema.optionalKey(Schema.Boolean),
+  threadFind: Schema.optionalKey(Schema.Boolean),
+  threadFindProgressive: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Folder behind this environment's Scratch project, for threads that need
+   * no repository. Present only on servers that answer projects.ensureScratch
+   * and whose data dir is outside a Git checkout.
+   */
+  scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Folder that holds projects started from just a name. Present only on
+   * servers that answer projects.createNew.
+   */
+  newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Palettes published by this environment's machine. Never sent in a config
+   * snapshot: the theme stream emits the current set before any change, so a
+   * snapshot carrying it too would hand every subscriber the same array twice
+   * per connect. Clients populate this by projecting `environmentThemesUpdated`,
+   * and it stays absent for subscribers that did not opt in.
+   */
+  environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
+  /**
+   * Quota reported by configured `usageLimitSources`. Like themes, never in
+   * a snapshot: the source stream emits the current set on subscribe, and it
+   * stays absent for subscribers that did not opt in.
+   */
+  usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+});
+export type ServerConfig = typeof ServerConfig.Type;
+
+/**
+ * The machine an environment should be drawn as: the user's pick, else what
+ * the server detected, else a generic server. Settings only exist once
+ * connected; a descriptor alone (relay discovery, before any connection)
+ * still yields the detected kind. A null config (nothing known yet, or an
+ * older server) resolves to the same generic so rows never flicker between
+ * glyphs.
+ */
+export function resolveEnvironmentMachineKind(
+  config: {
+    readonly environment: Pick<ExecutionEnvironmentDescriptor, "platform">;
+    readonly settings?: Pick<ServerSettings, "environmentIcon">;
+  } | null,
+): EnvironmentMachineKind {
+  return config?.settings?.environmentIcon ?? config?.environment.platform.machine ?? "server";
+}
+
+const ServerUpsertKeybindingReplaceTarget = Schema.Struct({
+  key: KeybindingValue,
+  command: KeybindingCommand,
+  when: Schema.optional(KeybindingWhen),
+});
+
+export const ServerUpsertKeybindingInput = Schema.Struct({
+  key: KeybindingValue,
+  command: KeybindingCommand,
+  when: Schema.optional(KeybindingWhen),
+  replace: Schema.optional(ServerUpsertKeybindingReplaceTarget),
+});
+export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;
+
+export const ServerRemoveKeybindingInput = ServerUpsertKeybindingReplaceTarget;
+export type ServerRemoveKeybindingInput = typeof ServerRemoveKeybindingInput.Type;
+
+export const ServerUpsertKeybindingResult = Schema.Struct({
+  keybindings: ResolvedKeybindingsConfig,
+  issues: ServerConfigIssues,
+});
+export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.Type;
+
+export const ServerRemoveKeybindingResult = ServerUpsertKeybindingResult;
+export type ServerRemoveKeybindingResult = typeof ServerRemoveKeybindingResult.Type;
+
+export const ServerConfigUpdatedPayload = Schema.Struct({
+  issues: ServerConfigIssues,
+  providers: ServerProviders,
+  settings: Schema.optional(ServerSettings),
+});
+export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
+
+export const ServerConfigKeybindingsUpdatedPayload = Schema.Struct({
+  keybindings: ResolvedKeybindingsConfig,
+  issues: ServerConfigIssues,
+});
+export type ServerConfigKeybindingsUpdatedPayload =
+  typeof ServerConfigKeybindingsUpdatedPayload.Type;
+
+export const ServerConfigProviderStatusesPayload = Schema.Struct({
+  providers: ServerProviders,
+});
+export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderStatusesPayload.Type;
+
+export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
+  settings: ServerSettings,
+});
+export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
+
+export const ServerConfigStreamSnapshotEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("snapshot"),
+  config: ServerConfig,
+});
+export type ServerConfigStreamSnapshotEvent = typeof ServerConfigStreamSnapshotEvent.Type;
+
+export const ServerConfigStreamKeybindingsUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("keybindingsUpdated"),
+  payload: ServerConfigKeybindingsUpdatedPayload,
+});
+export type ServerConfigStreamKeybindingsUpdatedEvent =
+  typeof ServerConfigStreamKeybindingsUpdatedEvent.Type;
+
+export const ServerConfigStreamProviderStatusesEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("providerStatuses"),
+  payload: ServerConfigProviderStatusesPayload,
+});
+export type ServerConfigStreamProviderStatusesEvent =
+  typeof ServerConfigStreamProviderStatusesEvent.Type;
+
+export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("settingsUpdated"),
+  payload: ServerConfigSettingsUpdatedPayload,
+});
+export type ServerConfigStreamSettingsUpdatedEvent =
+  typeof ServerConfigStreamSettingsUpdatedEvent.Type;
+
+export const ServerConfigEnvironmentThemesUpdatedPayload = Schema.Struct({
+  /** The full published set; empty once the machine publishes none. */
+  themes: Schema.Array(EnvironmentTheme),
+});
+export type ServerConfigEnvironmentThemesUpdatedPayload =
+  typeof ServerConfigEnvironmentThemesUpdatedPayload.Type;
+
+export const ServerConfigStreamEnvironmentThemesUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("environmentThemesUpdated"),
+  payload: ServerConfigEnvironmentThemesUpdatedPayload,
+});
+export type ServerConfigStreamEnvironmentThemesUpdatedEvent =
+  typeof ServerConfigStreamEnvironmentThemesUpdatedEvent.Type;
+
+export const ServerConfigUsageLimitSourcesUpdatedPayload = Schema.Struct({
+  /** The full set; empty once no source is configured. */
+  sources: UsageLimitSourceSnapshots,
+});
+export type ServerConfigUsageLimitSourcesUpdatedPayload =
+  typeof ServerConfigUsageLimitSourcesUpdatedPayload.Type;
+
+export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("usageLimitSourcesUpdated"),
+  payload: ServerConfigUsageLimitSourcesUpdatedPayload,
+});
+export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
+  typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
+
+export const ServerConfigStreamEvent = Schema.Union([
+  ServerConfigStreamSnapshotEvent,
+  ServerConfigStreamKeybindingsUpdatedEvent,
+  ServerConfigStreamProviderStatusesEvent,
+  ServerConfigStreamSettingsUpdatedEvent,
+  ServerConfigStreamEnvironmentThemesUpdatedEvent,
+  ServerConfigStreamUsageLimitSourcesUpdatedEvent,
+]);
+export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
+
+/** Terminal selection recorded by the service launcher for one update. */
+export const ServerSelfUpdateOutcome = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  fromVersion: TrimmedNonEmptyString,
+  targetVersion: TrimmedNonEmptyString,
+  status: Schema.Literals(["committed", "rolled-back", "failed"]),
+  reason: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerSelfUpdateOutcome = typeof ServerSelfUpdateOutcome.Type;
+
+export const ServerLifecycleReadyPayload = Schema.Struct({
+  at: IsoDateTime,
+  environment: ExecutionEnvironmentDescriptor,
+  /** Present when this process resumed a launcher-managed update. */
+  updateOutcome: Schema.optionalKey(ServerSelfUpdateOutcome),
+});
+export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
+
+export const ServerLifecycleWelcomePayload = Schema.Struct({
+  environment: ExecutionEnvironmentDescriptor,
+  cwd: TrimmedNonEmptyString,
+  projectName: TrimmedNonEmptyString,
+  bootstrapStatus: Schema.optional(Schema.Literals(["pending", "complete"])),
+  bootstrapProjectId: Schema.optional(ProjectId),
+  bootstrapThreadId: Schema.optional(ThreadId),
+  bootstrapProjectCreated: Schema.optional(Schema.Boolean),
+  bootstrapThreadCreated: Schema.optional(Schema.Boolean),
+});
+export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
+
+export const ServerLifecycleLegacyThreadMigrationPayload = Schema.Struct({
+  status: Schema.Union([Schema.Literal("running"), Schema.Literal("complete")]),
+  totalThreadCount: NonNegativeInt,
+});
+export type ServerLifecycleLegacyThreadMigrationPayload =
+  typeof ServerLifecycleLegacyThreadMigrationPayload.Type;
+
+export const ServerLifecycleStreamWelcomeEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("welcome"),
+  payload: ServerLifecycleWelcomePayload,
+});
+export type ServerLifecycleStreamWelcomeEvent = typeof ServerLifecycleStreamWelcomeEvent.Type;
+
+export const ServerLifecycleStreamReadyEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("ready"),
+  payload: ServerLifecycleReadyPayload,
+});
+export type ServerLifecycleStreamReadyEvent = typeof ServerLifecycleStreamReadyEvent.Type;
+
+export const ServerLifecycleStreamLegacyThreadMigrationEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("legacyThreadMigration"),
+  payload: ServerLifecycleLegacyThreadMigrationPayload,
+});
+export type ServerLifecycleStreamLegacyThreadMigrationEvent =
+  typeof ServerLifecycleStreamLegacyThreadMigrationEvent.Type;
+
+export const ServerLifecycleStreamEvent = Schema.Union([
+  ServerLifecycleStreamWelcomeEvent,
+  ServerLifecycleStreamReadyEvent,
+  ServerLifecycleStreamLegacyThreadMigrationEvent,
+]);
+export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
+
+export const ServerProviderUpdatedPayload = Schema.Struct({
+  providers: ServerProviders,
+});
+export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
+
+export const ServerProviderUpdateInput = Schema.Struct({
+  provider: ProviderDriverKind,
+  targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
+  instanceId: Schema.optionalKey(ProviderInstanceId),
+});
+export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
+
+export class ServerProviderUpdateError extends Schema.TaggedError<ServerProviderUpdateError>()(
+  "ServerProviderUpdateError",
+  {
+    provider: ProviderDriverKind,
+    reason: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Provider update failed for ${this.provider}: ${this.reason}`;
+  }
+}
+
+export const ServerSelfUpdateInput = Schema.Struct({
+  /** Exact npm version of the `t3` package to install (never a dist-tag, so
+      the server and the acknowledging client agree on what was requested). */
+  targetVersion: TrimmedNonEmptyString,
+  /** Opt-in recovery for provider turns that are running when the server
+      hands off to its replacement. Missing and false keep restart behavior
+      conservative under version skew. */
+  continueRunningThreads: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
+
+/** Acknowledgement that the update artifact is installed and the server is
+    about to restart into it — the connection will drop moments later. */
+export const ServerSelfUpdateResult = Schema.Struct({
+  targetVersion: TrimmedNonEmptyString,
+  method: ServerSelfUpdateMethod,
+  /** Launcher-generated correlation ID. Absent when talking to older servers. */
+  updateId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Desktop preparation token. Present only for the desktop-app method. */
+  desktopUpdateToken: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;
+
+export const DesktopUpdateCommitInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopUpdateCommitInput = typeof DesktopUpdateCommitInput.Type;
+
+export const ServerSelfUpdateProgressStage = Schema.Literals(["downloading", "installing"]);
+export type ServerSelfUpdateProgressStage = typeof ServerSelfUpdateProgressStage.Type;
+
+export const ServerSelfUpdateProgressEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("progress"),
+    stage: ServerSelfUpdateProgressStage,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("complete"),
+    result: ServerSelfUpdateResult,
+  }),
+]);
+export type ServerSelfUpdateProgressEvent = typeof ServerSelfUpdateProgressEvent.Type;
+
+export class ServerSelfUpdateError extends Schema.TaggedError<ServerSelfUpdateError>()(
+  "ServerSelfUpdateError",
+  {
+    reason: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Server update failed: ${this.reason}`;
+  }
+}
