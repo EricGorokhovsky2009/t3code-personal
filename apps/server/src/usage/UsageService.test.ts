@@ -1175,9 +1175,8 @@ describe("UsageService", () => {
             return text;
           });
 
-          const upgraded = yield* UsageService.make;
-          const summary = yield* upgraded.readSummary(WINDOW);
-          yield* upgraded.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          const summary = yield* restarted.readSummary(WINDOW);
           // The live rollout re-parses at the ultrafast rate (10 x 6); the
           // deleted one keeps its saved v4 usage at the standard rate (20 x 1).
           assert.strictEqual(totalOutputTokens(summary), 30);
@@ -1190,6 +1189,9 @@ describe("UsageService", () => {
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
           );
+          // The migrated cache is written in the background; let it land before
+          // the layer removes the state directory under it.
+          yield* restarted.awaitPersisted;
         }).pipe(
           Effect.provide(
             layerService({
