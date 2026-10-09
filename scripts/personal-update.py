@@ -100,6 +100,17 @@ def update():
         pending_file = STATE / "pending.json"
         staged = STATE / PRODUCT
         pending = json.loads(pending_file.read_text()) if pending_file.exists() else {}
+        # Connector-delivered builds are already verified and signed on this Mac.
+        # Finish their installation even when GitHub credentials are unavailable.
+        if pending and staged.exists():
+            if install_staged(staged):
+                write_json(installed_file, pending)
+                pending_file.unlink()
+                shutil.rmtree(staged)
+                print(f"Installed {pending['version']} at {TARGET}", flush=True)
+            else:
+                print("Update staged; waiting for the personal app to close", flush=True)
+            return
         runs = json.loads(command(GH, "run", "list", "--repo", REPO, "--workflow", "personal-build.yml", "--branch", "personal", "--status", "success", "--limit", "1", "--json", "databaseId,headSha"))
         if not runs:
             print("No successful personal build is available yet", flush=True)

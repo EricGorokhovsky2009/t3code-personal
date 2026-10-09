@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,36 @@ spec.loader.exec_module(updater)
 
 
 class UpdateTests(unittest.TestCase):
+    def test_staged_build_installs_without_github_credentials(self):
+        self.check_offline_staged_update(False)
+
+    def test_staged_build_waits_for_app_without_github_credentials(self):
+        self.check_offline_staged_update(True)
+
+    def check_offline_staged_update(self, running):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            target, staged = folder / "installed.app", folder / updater.PRODUCT
+            target.mkdir()
+            staged.mkdir()
+            (target / "version").write_text("old")
+            (staged / "version").write_text("new")
+            pending = {"runId": 42, "version": "new", "commit": "checked"}
+            updater.write_json(folder / "pending.json", pending)
+            install = updater.install_staged
+            with patch.object(updater, "STATE", folder), patch.object(updater, "command", side_effect=RuntimeError("GitHub unavailable")), patch.object(updater, "install_staged", side_effect=lambda app: install(app, target, lambda _: running)):
+                updater.update()
+            self.assertEqual((target / "version").read_text(), "old" if running else "new")
+            if running:
+                self.assertEqual(json.loads((folder / "pending.json").read_text()), pending)
+                self.assertTrue(staged.exists())
+                self.assertFalse((folder / "installed.json").exists())
+            else:
+                self.assertEqual(json.loads((folder / "installed.json").read_text()), pending)
+                self.assertFalse((folder / "pending.json").exists())
+                self.assertFalse(staged.exists())
+                self.assertEqual((target.with_name(target.name + ".previous") / "version").read_text(), "old")
+
     def archive(self, folder, name, symlink=None):
         archive = folder / "build.zip"
         with zipfile.ZipFile(archive, "w") as bundle:
