@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
@@ -58,6 +59,29 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination preview grant for reporting browser profiles", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const preview = createCommandPermissions(runtime, WS_METHODS.previewReportProfiles);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthPreviewOperateScope],
+            permissions: [AuthPreviewOperateScope],
+          }),
+        );
+        expect(registry.get(preview.permissionAtom(env))).toBe(true);
+        yield* preview.authorize(registry, env);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(preview.permissionAtom(env))).toBe(false);
+        expect((yield* preview.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
