@@ -93,7 +93,7 @@ import {
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 // Keeps pnpm from auto-installing TypeScript, a types-only peer, into the app.
@@ -1268,7 +1268,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
       }),
-    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+    ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("accepts an embedded Linux CLI release archive with a matching digest", () =>
@@ -1288,7 +1288,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         assert.equal(result.packagedAppDir, fixture.packagedAppDir);
       }),
-    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+    ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each(["x64", "arm64"] as const)(
@@ -1312,7 +1312,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
           assert.equal(result.packagedAppDir, fixture.packagedAppDir);
         }),
-      ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+      ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each(["x64", "arm64"] as const)(
@@ -1503,8 +1503,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.provide(
         Layer.mergeAll(
           spawnerLayer,
-          Layer.succeed(HostProcessPlatform, "win32"),
-          Layer.succeed(HostProcessArchitecture, "x64"),
+          Layer.succeed(HostProcess.Platform, "win32"),
+          Layer.succeed(HostProcess.Architecture, "x64"),
         ),
       ),
     );
@@ -1546,8 +1546,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.provide(
         Layer.mergeAll(
           spawnerLayer,
-          Layer.succeed(HostProcessPlatform, "linux"),
-          Layer.succeed(HostProcessArchitecture, "x64"),
+          Layer.succeed(HostProcess.Platform, "linux"),
+          Layer.succeed(HostProcess.Architecture, "x64"),
         ),
       ),
     );
@@ -1582,8 +1582,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.provide(
         Layer.mergeAll(
           spawnerLayer,
-          Layer.succeed(HostProcessPlatform, "darwin"),
-          Layer.succeed(HostProcessArchitecture, "arm64"),
+          Layer.succeed(HostProcess.Platform, "darwin"),
+          Layer.succeed(HostProcess.Architecture, "arm64"),
         ),
       ),
     );
@@ -1628,8 +1628,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.provide(
         Layer.mergeAll(
           spawnerLayer,
-          Layer.succeed(HostProcessPlatform, "win32"),
-          Layer.succeed(HostProcessArchitecture, "x64"),
+          Layer.succeed(HostProcess.Platform, "win32"),
+          Layer.succeed(HostProcess.Architecture, "x64"),
         ),
       ),
     );
@@ -1657,8 +1657,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ).pipe(
       Effect.provide(
         Layer.mergeAll(
-          Layer.succeed(HostProcessPlatform, "win32"),
-          Layer.succeed(HostProcessArchitecture, "x64"),
+          Layer.succeed(HostProcess.Platform, "win32"),
+          Layer.succeed(HostProcess.Architecture, "x64"),
         ),
       ),
     ),
@@ -1769,7 +1769,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, BundleNotSelfContainedError);
         assert.include(error.output, "t3code-deliberately-missing-package");
       }),
-    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+    ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("preserves both Linux icon resize failures with structural context", () => {
@@ -2338,8 +2338,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcessPlatform, "win32"),
-            Layer.succeed(HostProcessArchitecture, "x64"),
+            Layer.succeed(HostProcess.Platform, "win32"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
