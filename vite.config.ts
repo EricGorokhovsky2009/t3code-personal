@@ -54,6 +54,7 @@ const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
 };
 
 export default defineConfig({
+  assetsInclude: ["**/*.wasm"],
   resolve: {
     alias: {
       "~": NodeURL.fileURLToPath(new URL("./apps/web/src", import.meta.url)),
@@ -249,6 +250,16 @@ export default defineConfig({
       {
         files: ["apps/mobile/src/**"],
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
+      },
+      {
+        // React commits state set in a raw ResizeObserver callback after the paint, so derived
+        // layout lands a frame late. observeResize flushes every observed resize in one render.
+        files: ["apps/web/src/**"],
+        excludeFiles: [
+          "apps/web/src/lib/observeResize.ts",
+          "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        ],
+        rules: { "t3code/no-raw-resize-observer": "error" },
       },
       {
         // Every class in web code must be one Tailwind generates: a typo or a class nothing
