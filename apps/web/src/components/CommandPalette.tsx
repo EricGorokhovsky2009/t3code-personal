@@ -841,6 +841,7 @@ function OpenCommandPaletteDialog(props: {
   const unsortedProjectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
+        groupScratchProjects: true,
         projects: clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,

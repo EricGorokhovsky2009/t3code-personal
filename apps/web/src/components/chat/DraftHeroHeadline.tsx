@@ -90,6 +90,7 @@ export function DraftHeroHeadline({
     () =>
       sortLogicalProjectsForSidebar(
         buildSidebarProjectSnapshots({
+          groupScratchProjects: true,
           projects,
           settings: projectGroupingSettings,
           primaryEnvironmentId,
@@ -263,7 +264,12 @@ export function DraftHeroHeadline({
     ) {
       return false;
     }
-    selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
+    selectProject(
+      project,
+      deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings, {
+        groupScratchProjects: true,
+      }),
+    );
     return true;
   };
 

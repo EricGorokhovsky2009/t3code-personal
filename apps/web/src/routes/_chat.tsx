@@ -48,6 +48,7 @@ function ChatRouteGlobalShortcuts() {
   const projectGroupCount = useMemo(
     () =>
       buildSidebarProjectSnapshots({
+        groupScratchProjects: true,
         projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,

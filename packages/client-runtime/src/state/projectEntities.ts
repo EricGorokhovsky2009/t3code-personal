@@ -19,12 +19,12 @@ const EMPTY_PROJECT_INDEX: ReadonlyMap<ProjectId, OrchestrationProjectShell> = n
 
 export function createEnvironmentProjectAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
-  readonly serverConfigValueAtom: (
-    environmentId: EnvironmentId,
-  ) => Atom.Atom<Pick<ServerConfig, "scratchWorkspaceRoot"> | null>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
+  readonly serverConfigValueAtom?: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<Pick<ServerConfig, "scratchWorkspaceRoot"> | null>;
 }) {
   const environmentProjectsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
@@ -61,18 +61,30 @@ export function createEnvironmentProjectAtoms(input: {
   const projectAtomFamily = Atom.family((key: string) => {
     const ref = parseProjectKey(key);
     let previousSource: OrchestrationProjectShell | null = null;
-    let previousValue: EnvironmentProject | null = null;
     let previousIsScratch = false;
+    let previousValue: EnvironmentProject | null = null;
     return Atom.make((get) => {
       const source = get(environmentProjectIndexAtom(ref.environmentId)).get(ref.projectId) ?? null;
-      const scratchRoot = get(input.serverConfigValueAtom(ref.environmentId))?.scratchWorkspaceRoot;
-      const isScratch = source !== null && isScratchProject(source, scratchRoot);
-      if (source === previousSource && isScratch === previousIsScratch) {
+      const scratch =
+        source !== null &&
+        isScratchProject(
+          source,
+          input.serverConfigValueAtom
+            ? get(input.serverConfigValueAtom(ref.environmentId))?.scratchWorkspaceRoot
+            : null,
+        );
+      if (source === previousSource && scratch === previousIsScratch) {
         return previousValue;
       }
       previousSource = source;
-      previousIsScratch = isScratch;
-      previousValue = source === null ? null : scopeProject(ref.environmentId, source, isScratch);
+      previousIsScratch = scratch;
+      previousValue =
+        source === null
+          ? null
+          : {
+              ...scopeProject(ref.environmentId, source),
+              ...(scratch ? { isScratch: true as const } : {}),
+            };
       return previousValue;
     }).pipe(Atom.withLabel(`environment-project:${key}`));
   });
@@ -103,12 +115,24 @@ export function createEnvironmentProjectAtoms(input: {
     return previousProjects;
   }).pipe(Atom.withLabel("environment-project-list"));
 
+  const projectConfigsReadyAtom = Atom.make((get) => {
+    const catalog = get(input.catalogValueAtom);
+    if (!catalog.isReady) return false;
+    for (const environmentId of enabledEnvironmentIds(catalog)) {
+      if (input.serverConfigValueAtom && get(input.serverConfigValueAtom(environmentId)) === null) {
+        return false;
+      }
+    }
+    return true;
+  }).pipe(Atom.withLabel("environment-project-configs-ready"));
+
   return {
     environmentProjectsAtom,
     environmentProjectIndexAtom,
     environmentProjectRefsAtom,
     projectRefsAtom,
     projectsAtom,
+    projectConfigsReadyAtom,
     projectAtom: (ref: ScopedProjectRef) => projectAtomFamily(projectKey(ref)),
   };
 }

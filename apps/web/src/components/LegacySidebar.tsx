@@ -3339,6 +3339,7 @@ export default function LegacySidebar() {
 
   const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(() => {
     return buildSidebarProjectSnapshots({
+      groupScratchProjects: true,
       projects: orderedProjects,
       settings: projectGroupingSettings,
       primaryEnvironmentId,

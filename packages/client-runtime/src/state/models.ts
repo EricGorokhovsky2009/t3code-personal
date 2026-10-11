@@ -22,8 +22,8 @@ import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
-  /** Identified by the environment's advertised scratch root, never its title. */
-  readonly isScratchProject?: boolean;
+  /** Derived from the environment's configured scratch root, never persisted. */
+  readonly isScratch?: true;
 }
 
 /**
@@ -203,9 +203,8 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
 export function scopeProject(
   environmentId: EnvironmentId,
   project: OrchestrationProjectShell,
-  isScratchProject = false,
 ): EnvironmentProject {
-  return { ...project, environmentId, isScratchProject };
+  return { ...project, environmentId };
 }
 
 export function presentThreadShell(
