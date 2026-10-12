@@ -300,14 +300,14 @@ describe("terminatePosixOwnedProcessTree", () => {
         "/nonexistent-t3-probe",
         [],
       );
-      const missingTargetResult = NodeChildProcess.spawnSync(
-        missingTarget.command,
-        missingTarget.args,
-        {
+      // Bash skips the EXIT trap when exec fails, unlike Debian's /bin/sh.
+      for (const shell of new Set([missingTarget.command, "/bin/bash"])) {
+        if (!NodeFS.existsSync(shell)) continue;
+        const missingTargetResult = NodeChildProcess.spawnSync(shell, missingTarget.args, {
           encoding: "utf8",
-        },
-      );
-      expect(missingTargetResult.status, missingTargetResult.stderr).toBe(125);
+        });
+        expect(missingTargetResult.status, `${shell}: ${missingTargetResult.stderr}`).toBe(125);
+      }
     } finally {
       packagedExecPath.mockRestore();
       NodeFS.rmSync(scratch, { recursive: true, force: true });
