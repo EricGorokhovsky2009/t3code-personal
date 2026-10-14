@@ -185,10 +185,10 @@ describe("composer file attachments", () => {
     );
 
     it.each([
-      { size: { width: 4032, height: 3024 }, resizes: [{ width: 2048 }] },
-      { size: { width: 3024, height: 4032 }, resizes: [{ height: 2048 }] },
-      { size: { width: 2048, height: 1536 }, resizes: [] },
-    ])("bounds a $size.width x $size.height photo to a 2048 px longest edge", async (input) => {
+      { size: { width: 4032, height: 3024 }, resizes: [{ width: 2000, height: 1500 }] },
+      { size: { width: 3024, height: 4032 }, resizes: [{ width: 1500, height: 2000 }] },
+      { size: { width: 2000, height: 1500 }, resizes: [] },
+    ])("bounds a $size.width x $size.height photo to a 2000 px longest edge", async (input) => {
       native.size = input.size;
       mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
 
@@ -445,11 +445,11 @@ describe("composer file attachments", () => {
         error: "'clip.mov' is empty or could not be read.",
       },
       {
-        reason: "server advertises more than the contract limit",
-        reported: 51 * 1024 * 1024,
+        reason: "picker size exceeds a server limit above 50 MB",
+        reported: 81 * 1024 * 1024,
         stored: 42,
         limit: 80 * 1024 * 1024,
-        error: "'clip.mov' exceeds the 50 MB attachment limit.",
+        error: "'clip.mov' exceeds the 80 MB attachment limit.",
       },
     ])(
       "rejects a video when $reason while retaining the selected photo",
@@ -676,7 +676,7 @@ describe("composer file attachments", () => {
     expect(mocks.copy).not.toHaveBeenCalled();
   });
 
-  it("never accepts files above the 50 MB contract limit", async () => {
+  it("accepts generic files above 50 MB within the advertised server limit", async () => {
     mocks.pickFile.mockResolvedValue({
       canceled: false,
       assets: [
@@ -689,11 +689,13 @@ describe("composer file attachments", () => {
       ],
     });
 
+    mocks.size.mockReturnValue(51 * 1024 * 1024);
+
     await expect(
       pickComposerFiles({ existingCount: 0, maxBytes: 80 * 1024 * 1024 }),
     ).resolves.toEqual({
-      files: [],
-      error: "'archive.zip' exceeds the 50 MB attachment limit.",
+      files: [expect.objectContaining({ type: "file", name: "archive.zip", sizeBytes: 51 * 1024 * 1024 })],
+      error: null,
     });
   });
 
