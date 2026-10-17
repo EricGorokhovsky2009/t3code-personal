@@ -1,4 +1,4 @@
-import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
+import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
@@ -89,7 +89,6 @@ import React, {
   use,
   memo,
   useEffect,
-  useMemo,
   useLayoutEffect,
   useRef,
   useState,
@@ -669,7 +668,7 @@ function MarkdownDetails({
   const revealForFind = () => setIsOpen(true);
   // Base UI only listens for `beforematch` on a panel mounted at its first
   // render; a closed panel mounts later, when find starts, so listen here.
-  const findRevealRef = useFindRevealRef(revealForFind);
+  const revealRef = findRevealRef(revealForFind);
   const childNodes = Children.toArray(children);
   const summaryIndex = childNodes.findIndex(
     (child) => isValidElement(child) && child.type === "summary",
@@ -699,7 +698,7 @@ function MarkdownDetails({
           />
           <span>{summary}</span>
         </CollapsibleTrigger>
-        <CollapsiblePanel ref={findRevealRef} hiddenUntilFound={searching}>
+        <CollapsiblePanel ref={revealRef} hiddenUntilFound={searching}>
           <div
             className="pb-3 ps-6 text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]"
             data-markdown-details-content=""
@@ -985,7 +984,7 @@ function MarkdownMermaidCodeBlock({
   const [showCode, setShowCode] = useState(false);
   const searching = use(MarkdownFindContext);
   const revealSource = () => setShowCode(true);
-  const sourceRevealRef = useFindRevealRef(revealSource);
+  const sourceRevealRef = findRevealRef(revealSource);
   const showDiagram = !showCode && !isStreaming && code.trim().length > 0;
   const toggleLabel = showCode ? "Show diagram" : "Show code";
   return (
@@ -1094,7 +1093,44 @@ interface UncachedShikiCodeBlockProps {
   preserveLines: boolean;
 }
 
-function UncachedShikiCodeBlock({
+// The tokenizer owns streaming line state, so cache its creation separately from each code update.
+function useCodeBlockHighlighter(
+  language: string,
+  themeName: DiffThemeName,
+  preserveLines: boolean,
+) {
+  const highlighter = use(getSyntaxHighlighterPromise(language));
+  const [cached, setCached] = useState(() => ({
+    highlighter,
+    language,
+    themeName,
+    preserveLines,
+    incrementalHighlight: preserveLines
+      ? createIncrementalHighlightedDocument(highlighter, language, themeName)
+      : null,
+  }));
+  if (
+    cached.highlighter !== highlighter ||
+    cached.language !== language ||
+    cached.themeName !== themeName ||
+    cached.preserveLines !== preserveLines
+  ) {
+    const next = {
+      highlighter,
+      language,
+      themeName,
+      preserveLines,
+      incrementalHighlight: preserveLines
+        ? createIncrementalHighlightedDocument(highlighter, language, themeName)
+        : null,
+    };
+    setCached(next);
+    return next;
+  }
+  return cached;
+}
+
+const UncachedShikiCodeBlock = memo(function UncachedShikiCodeBlock({
   code,
   language,
   themeName,
@@ -1102,14 +1138,12 @@ function UncachedShikiCodeBlock({
   isStreaming,
   preserveLines,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
-  // Retain streaming tokenization state even when this component runs without the compiler.
-  const incrementalHighlight = useMemo(
-    () =>
-      preserveLines ? createIncrementalHighlightedDocument(highlighter, language, themeName) : null,
-    [highlighter, preserveLines, language, themeName],
+  const { highlighter, incrementalHighlight } = useCodeBlockHighlighter(
+    language,
+    themeName,
+    preserveLines,
   );
-  const highlighted = useMemo(() => {
+  const highlighted = (() => {
     try {
       if (incrementalHighlight) return incrementalHighlight(code);
       return preserveLines
@@ -1124,7 +1158,7 @@ function UncachedShikiCodeBlock({
         ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
         : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
     }
-  }, [code, highlighter, incrementalHighlight, language, preserveLines, themeName]);
+  })();
 
   useEffect(() => {
     if (!isStreaming) {
@@ -1144,7 +1178,7 @@ function UncachedShikiCodeBlock({
       <HighlightedCodeLines root={highlighted} />
     </div>
   );
-}
+});
 
 interface MarkdownFileLinkProps {
   environmentId: EnvironmentId | null;
