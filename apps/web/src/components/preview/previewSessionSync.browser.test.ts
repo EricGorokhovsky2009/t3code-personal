@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import {
   EnvironmentId,
   ThreadId,
@@ -78,7 +76,8 @@ import { AppAtomRegistryProvider, appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
 import { usePreviewSession } from "./usePreviewSession";
 
-let renderer: Root | null = null;
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
 let sequence = 0;
 let ref: ScopedThreadRef;
 
@@ -109,9 +108,10 @@ const result = (
 });
 
 async function mount() {
+  container = document.body.appendChild(document.createElement("div"));
+  root = createRoot(container);
   await act(async () => {
-    renderer = createRoot(document.createElement("div"));
-    renderer.render(createElement(AppAtomRegistryProvider, null, createElement(SessionSync)));
+    root!.render(createElement(AppAtomRegistryProvider, null, createElement(SessionSync)));
   });
 }
 
@@ -125,8 +125,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = null;
+  await act(async () => root?.unmount());
+  root = null;
+  container?.remove();
+  container = null;
   resetPreviewStateForTests();
   vi.unstubAllGlobals();
 });

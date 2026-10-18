@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import {
   DeviceOperationError,
@@ -87,18 +86,17 @@ const deviceState = {
   revision: 1,
 } satisfies DeviceServiceState;
 
-let renderer: Root | undefined;
-let container: HTMLDivElement;
+let root: Root | undefined;
+let container: HTMLDivElement | undefined;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   list.mockReset();
-  container = document.createElement("div");
-  renderer = createRoot(container);
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(() => root?.unmount());
+  container?.remove();
   vi.unstubAllGlobals();
 });
 
@@ -125,8 +123,10 @@ it.each([
   "reports $name as the server describes it, not as a network problem",
   async ({ error, message }) => {
     list.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(error) });
+    container = document.body.appendChild(document.createElement("div"));
+    root = createRoot(container);
     await act(() => {
-      renderer!.render(
+      root!.render(
         <DeviceIntegrationControls
           environmentId={environmentId}
           enabled
@@ -135,7 +135,7 @@ it.each([
       );
     });
 
-    const update = Array.from(container.querySelectorAll("button")).find(
+    const update = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "Update to v0.12.0",
     );
     expect(update).toBeDefined();
