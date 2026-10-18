@@ -305,6 +305,7 @@ describe("terminatePosixOwnedProcessTree", () => {
           encoding: "utf8",
         });
         expect(missingTargetResult.status, `${shell}: ${missingTargetResult.stderr}`).toBe(125);
+        expect(missingTargetResult.stderr).toContain("/nonexistent-t3-probe");
       }
     } finally {
       packagedExecPath.mockRestore();
