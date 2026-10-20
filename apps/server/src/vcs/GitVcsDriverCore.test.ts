@@ -30,6 +30,7 @@ import {
   type ReviewDiffPreviewResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
@@ -3159,6 +3160,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "lists the real repository through a symlink when a decoy repo occupies the lexical common dir",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const sandbox = yield* makeTmpDir("git-symlink-subdir-");
+          yield* initRepoWithCommit(sandbox);
+          yield* git(sandbox, ["branch", "-M", "decoy-only"]);
+          const repo = pathService.join(sandbox, "repo");
+          const link = pathService.join(sandbox, "nest", "link");
+          yield* fileSystem.makeDirectory(pathService.join(repo, "sub", "dir"), {
+            recursive: true,
+          });
+          yield* fileSystem.makeDirectory(pathService.dirname(link), { recursive: true });
+          yield* fileSystem.symlink(pathService.join(repo, "sub", "dir"), link);
+
+          yield* initRepoWithCommit(repo);
+          yield* git(repo, ["checkout", "-b", "real-only"]);
+
+          // The decoy must exist before the first lookup, which caches repository paths.
+          const refs = yield* (yield* GitVcsDriver.GitVcsDriver).listRefs({ cwd: link });
+          assert.isTrue(refs.isRepo);
+          assert.isFalse(refs.refs.some((ref) => ref.name === "decoy-only"));
+          assert.isTrue(refs.refs.some((ref) => ref.name === "real-only"));
+        }),
+    );
+
     it.effect("reads Changes totals with untracked files when requested", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -3225,6 +3254,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           deletions: 0,
         });
       }),
+    );
+
+    it.effect(
+      "counts many untracked files exactly while collapsing their directory in status",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["branch", "-M", "main"]);
+          yield* git(cwd, ["checkout", "-b", "feature/many-untracked"]);
+          yield* Effect.forEach(
+            Array.from({ length: 1_001 }, (_, index) => `bulk/${index}.txt`),
+            (file) => writeTextFile(cwd, file, "one\ntwo\n"),
+            { concurrency: 32, discard: true },
+          );
+
+          const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+          assert.deepStrictEqual(status.branchChanges, {
+            baseRef: "main",
+            insertions: 2_002,
+            deletions: 0,
+          });
+          assert.deepStrictEqual(
+            status.workingTree.files.map((file) => file.path),
+            ["bulk/"],
+          );
+        }),
     );
 
     it.effect("reports non-repository directories without failing", () =>
