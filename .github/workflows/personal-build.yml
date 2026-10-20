@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'EricGorokhovsky2009/t3code-personal' && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge upstream T3 Code'))
+    if: github.repository == 'EricGorokhovsky2009/t3code-personal'
     runs-on: ${{ fromJSON(vars.PERSONAL_MAC_RUNNER || '["macos-15"]') }}
     timeout-minutes: 60
     outputs:
@@ -134,3 +134,4 @@ jobs:
           set -euo pipefail
           test -f release/nightly-mac.yml
           gh release create "v${VERSION}" release/* --target "$COMMIT" --prerelease --title "Personal T3 Code ${VERSION}" --notes 'Personal build with upstream T3 Code changes and local customizations.'
+
