@@ -43,12 +43,6 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
-// Load the flowchart parser before timed timeline interactions on busy runners.
-{
-  const pele = await import("pele/lazy");
-  await pele.load("flowchart");
-}
-
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const CREATED_AT = "2026-03-17T19:12:28.000Z";
 
