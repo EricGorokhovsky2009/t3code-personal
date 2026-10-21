@@ -774,7 +774,7 @@ export function loggedClaudeQueryOptions(
   };
 }
 
-function makeClaudeAgentSdkProtocolLogger(input: {
+export function makeClaudeAgentSdkProtocolLogger(input: {
   readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -3615,7 +3615,7 @@ export function claudeSdkUserInputAnswers(
   );
 }
 
-function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
+export function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
       ? Reflect.get(input, "value")
@@ -3783,7 +3783,7 @@ function claudeTaskSteps(tasks: ClaudeTaskList): ReadonlyArray<OrchestrationV2Pl
   return [...tasks].map(([id, task]) => ({ id: `task-${id}`, ...task }));
 }
 
-function claudeProposedPlan(input: unknown): string | null {
+export function claudeProposedPlan(input: unknown): string | null {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
       ? Reflect.get(input, "value")
