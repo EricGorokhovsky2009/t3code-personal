@@ -51,13 +51,14 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
+    // Type-to-focus only calls insertTextAtEnd, so the stand-in composer implements just that.
     composerRef: {
       current: {
         insertTextAtEnd: (key: string) => {
           props.composerKeys.push(key);
           return true;
         },
-      } as ChatComposerHandle,
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
