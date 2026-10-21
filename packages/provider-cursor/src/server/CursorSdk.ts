@@ -15,7 +15,7 @@ const CURSOR_SHELL_SPAWN_MARKERS = [
   "__CURSOR_SANDBOX_ENV_RESTORE",
 ] as const;
 
-function isCursorShellSpawnFailure(reason: unknown): boolean {
+export function isCursorShellSpawnFailure(reason: unknown): boolean {
   if (typeof reason !== "object" || reason === null) {
     return false;
   }
