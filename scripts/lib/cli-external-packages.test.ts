@@ -123,6 +123,21 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
 });
 
 describe("findInlinedExternalPackages", () => {
+  it("scans Vite 1.4 module path comments", () => {
+    const source = [
+      "// ../../node_modules/.pnpm/effect@4.0.5/node_modules/effect/dist/Pipeable.js",
+      "var x = 1;",
+      "// ../../node_modules/.pnpm/node-addon-api@7.1.1/node_modules/node-addon-api/index.js",
+      "var y = 2;",
+      "// ../../src/server/main.ts",
+    ].join("\n");
+    const result = findInlinedExternalPackages(source);
+
+    assert.strictEqual(result.regionCount, 3);
+    assert.deepStrictEqual(result.inlinedPackages, ["effect", "node-addon-api"]);
+    assert.deepStrictEqual(result.inlined, ["node-addon-api"]);
+  });
+
   const region = (path: string) => `//#region ${path}
 var x = 1;
 //#endregion
