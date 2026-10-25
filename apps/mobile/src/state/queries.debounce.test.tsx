@@ -25,6 +25,7 @@ vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("./orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("./threads", () => ({ olderSettledThreads: {}, threadFamilies: {} }));
 vi.mock("./vcs", () => ({ vcsEnvironment: {} }));
+vi.mock("./threads", () => ({ olderSettledThreads: {}, threadFamilies: {} }));
 vi.mock("./query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
     data:
