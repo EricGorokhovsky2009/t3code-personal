@@ -134,4 +134,3 @@ jobs:
           set -euo pipefail
           test -f release/nightly-mac.yml
           gh release create "v${VERSION}" release/* --target "$COMMIT" --prerelease --title "Personal T3 Code ${VERSION}" --notes 'Personal build with upstream T3 Code changes and local customizations.'
-
