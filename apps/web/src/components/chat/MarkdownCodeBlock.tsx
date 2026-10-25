@@ -5,7 +5,10 @@ import React, { memo, use, useEffect, useRef, useState, type ReactNode } from "r
 
 import { getClientSettings } from "../../hooks/useSettings";
 import type { DiffThemeName } from "../../lib/diffRendering";
-import { createIncrementalHighlightedDocument } from "../../lib/incrementalHighlighting";
+import {
+  createIncrementalHighlightedDocument,
+  highlightCodeToHast,
+} from "../../lib/incrementalHighlighting";
 import { LRUCache } from "../../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { cn } from "../../lib/utils";
@@ -391,11 +394,12 @@ const UncachedShikiCodeBlock = memo(function UncachedShikiCodeBlock({
     themeName,
     preserveLines,
   );
+  useEffect(() => () => incrementalHighlight?.dispose(), [incrementalHighlight]);
   const highlighted = (() => {
     try {
       if (incrementalHighlight) return incrementalHighlight(code);
       return preserveLines
-        ? highlighter.codeToHast(code, { lang: language, theme: themeName })
+        ? highlightCodeToHast(highlighter, code, language, themeName)
         : highlighter.codeToHtml(code, { lang: language, theme: themeName });
     } catch (error) {
       console.warn(
@@ -403,7 +407,7 @@ const UncachedShikiCodeBlock = memo(function UncachedShikiCodeBlock({
         error instanceof Error ? error.message : error,
       );
       return preserveLines
-        ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
+        ? highlightCodeToHast(highlighter, code, "text", themeName)
         : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
     }
   })();
