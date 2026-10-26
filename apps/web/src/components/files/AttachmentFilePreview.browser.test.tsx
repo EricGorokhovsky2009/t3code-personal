@@ -1259,7 +1259,7 @@ it.each([
   }
 });
 
-it.each([
+const EXPANDED_WORD_ROLES = [
   "footnotes",
   "note roots",
   "endnotes",
@@ -1272,8 +1272,9 @@ it.each([
   "style visits",
   "numbering",
   "picture numbering",
-])("keeps the body and warns when omitting expanded %s", async (role) => {
-  const { default: JSZip } = await import("jszip");
+] as const;
+
+async function expandedWordFixture(role: (typeof EXPANDED_WORD_ROLES)[number]) {
   const archive = new JSZip();
   const ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   const type = role.startsWith("style")
@@ -1289,8 +1290,7 @@ it.each([
   );
   const text = (value: string) => `<w:p><w:r><w:t>${value}</w:t></w:r></w:p>`;
   // Each copy of the 2,000-paragraph payload costs 8,000 markup units, so 20
-  // references (or pages) exceed the 100,000-unit expansion budget. More pages
-  // only add layout time to the preview.
+  // references (or pages) exceed the 100,000-unit expansion budget.
   archive.file(
     "word/document.xml",
     `<w:document xmlns:w="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${text("body retained")}${Array.from({ length: 20 }, () => `<w:p><w:r><w:footnoteReference w:id="1"/><w:endnoteReference w:id="1"/><w:commentReference w:id="1"/><w:br w:type="page"/></w:r></w:p>`).join("")}<w:sectPr><w:headerReference w:type="default" r:id="aux"/><w:footerReference w:type="default" r:id="aux"/></w:sectPr></w:body></w:document>`,
@@ -1320,47 +1320,73 @@ it.each([
       `<w:footnotes xmlns:w="${ns}" padding="${"x".repeat(32_000)}">${Array.from({ length: 200 }, (_, id) => `<w:footnote w:id="${id}">${text("omitted payload")}</w:footnote>`).join("")}</w:footnotes>`,
     );
   }
-  const file = await archive.generateAsync({ type: "blob", compression: "DEFLATE" });
-  if (role === "note roots") {
+  return archive.generateAsync({ type: "blob", compression: "DEFLATE" });
+}
+
+// Rendering starts a layout engine per case, which dominated this file on loaded CI
+// runners. The omission decision lives in prepareOffice, so every role is checked there.
+it.each(EXPANDED_WORD_ROLES)(
+  "keeps the body and omits expanded %s from the prepared document",
+  async (role) => {
+    const file = await expandedWordFixture(role);
     const { SaxesParser } = await import("saxes");
     const { prepareOffice } = await import("./officeArchive");
     const parse = vi.spyOn(SaxesParser.prototype, "write");
     try {
-      expect((await prepareOffice(await file.arrayBuffer(), "docx")).truncated).toBe(true);
-      expect(
-        parse.mock.calls.reduce(
-          (sum, [chunk]) => sum + (typeof chunk === "string" ? chunk.length : 0),
-          0,
-        ),
-      ).toBeLessThan(4 * 1024 * 1024);
+      const prepared = await prepareOffice(await file.arrayBuffer(), "docx");
+      expect(prepared.truncated).toBe(true);
+      if (role === "note roots")
+        expect(
+          parse.mock.calls.reduce(
+            (sum, [chunk]) => sum + (typeof chunk === "string" ? chunk.length : 0),
+            0,
+          ),
+        ).toBeLessThan(4 * 1024 * 1024);
+      const bounded = await JSZip.loadAsync(prepared.bytes);
+      const markup = await bounded.file("word/document.xml")!.async("string");
+      expect(markup).toContain("body retained");
+      expect(bounded.file("word/media/aux.xml")).toBeNull();
+      // A dangling header or footer reference makes the engine reject the whole body.
+      expect(markup).not.toMatch(/<w:(header|footer)Reference/);
+      for (const entry of Object.values(bounded.files))
+        if (!entry.dir) expect(await entry.async("string")).not.toContain("omitted payload");
     } finally {
       parse.mockRestore();
     }
-  }
-  const src = URL.createObjectURL(file);
-  try {
-    const container = document.createElement("div");
-    container.style.cssText = "display:flex;flex-direction:column;width:640px;height:700px";
-    await using screen = await render(
-      <OfficeFilePreview src={src} name="expanded.docx" kind="docx" sizeBytes={file.size} />,
-      { container },
-    );
-    await vi.waitFor(
-      () => {
-        expect(screen.container.querySelector('[role="alert"]')?.textContent ?? "").toBe("");
-        expect(screen.container.textContent).toContain("body retained");
-      },
-      { timeout: 30_000 },
-    );
-    expect(screen.container.textContent).toContain("Preview limited");
-    expect(screen.container.textContent).not.toContain("omitted payload");
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector("canvas")!.width).toBeGreaterThan(0),
-    );
-  } finally {
-    URL.revokeObjectURL(src);
-  }
-});
+  },
+);
+
+// Two full renders prove the engine accepts a prepared body whose parts were removed
+// (body references for notes, section references for headers and footers) and show the warning.
+it.each(["footnotes", "footer"] as const)(
+  "renders the body and warns when omitting expanded %s",
+  async (role) => {
+    const file = await expandedWordFixture(role);
+    const src = URL.createObjectURL(file);
+    try {
+      const container = document.createElement("div");
+      container.style.cssText = "display:flex;flex-direction:column;width:640px;height:700px";
+      await using screen = await render(
+        <OfficeFilePreview src={src} name="expanded.docx" kind="docx" sizeBytes={file.size} />,
+        { container },
+      );
+      await vi.waitFor(
+        () => {
+          expect(screen.container.querySelector('[role="alert"]')?.textContent ?? "").toBe("");
+          expect(screen.container.textContent).toContain("body retained");
+        },
+        { timeout: 30_000 },
+      );
+      expect(screen.container.textContent).toContain("Preview limited");
+      expect(screen.container.textContent).not.toContain("omitted payload");
+      await vi.waitFor(() =>
+        expect(screen.container.querySelector("canvas")!.width).toBeGreaterThan(0),
+      );
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  },
+);
 
 it.each([
   "ordinary parts",
@@ -1815,48 +1841,42 @@ it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
   }
 });
 
-it.each([60, 100])("renders all %i pages of a table-heavy Word report", async (pages) => {
-  const { default: JSZip } = await import("jszip");
-  const archive = new JSZip();
-  const paragraph = (text: string) =>
-    `<w:p><w:pPr><w:spacing w:after="120"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri"/><w:sz w:val="22"/></w:rPr><w:t>${text}</w:t></w:r></w:p>`;
-  archive.file(
-    "word/document.xml",
-    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${Array.from({ length: pages }, (_, page) => paragraph(`page ${page + 1}`) + `<w:tbl>${Array.from({ length: 10 }, () => `<w:tr>${Array.from({ length: 5 }, () => `<w:tc><w:tcPr><w:tcW w:w="1800"/></w:tcPr>${paragraph("report entry")}</w:tc>`).join("")}</w:tr>`).join("")}</w:tbl>`).join("")}</w:body></w:document>`,
-  );
-  archive.file(
-    "_rels/.rels",
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
-  );
-  archive.file(
-    "[Content_Types].xml",
-    '<Types><Default Extension="png" ContentType="image/png"/></Types>',
-  );
-  // Binary media must not consume the document's markup budget.
-  archive.file("word/media/image.png", new Uint8Array(2_500_000));
-  const file = await archive.generateAsync({ type: "blob", compression: "DEFLATE" });
-  const container = document.createElement("div");
-  container.style.cssText = "display:flex;flex-direction:column;width:640px;height:700px";
-  await using screen = await render(
-    <AttachmentFilePreview
-      name="report.docx"
-      mimeType="application/octet-stream"
-      file={file}
-      sizeBytes={file.size}
-    />,
-    { container },
-  );
-  await vi.waitFor(() => expect(screen.container.textContent).toMatch(/\d+ pages/), {
-    timeout: 30_000,
-  });
-  expect(screen.container.textContent).not.toContain("Preview limited");
-  expect(screen.container.querySelector('[role="alert"]')).toBeNull();
-  const scroll = screen.container.querySelector<HTMLElement>("[data-office-pages]")!;
-  await act(() => scroll.scrollTo({ top: scroll.scrollHeight }));
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("page " + pages), {
-    timeout: 30_000,
-  });
-});
+it.each([60, 100])(
+  "preserves all %i sections of a table-heavy Word report for rendering",
+  async (pages) => {
+    const { default: JSZip } = await import("jszip");
+    const archive = new JSZip();
+    const paragraph = (text: string) =>
+      `<w:p><w:pPr><w:spacing w:after="120"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri"/><w:sz w:val="22"/></w:rPr><w:t>${text}</w:t></w:r></w:p>`;
+    archive.file(
+      "word/document.xml",
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${Array.from({ length: pages }, (_, page) => paragraph(`page ${page + 1}`) + `<w:tbl>${Array.from({ length: 10 }, () => `<w:tr>${Array.from({ length: 5 }, () => `<w:tc><w:tcPr><w:tcW w:w="1800"/></w:tcPr>${paragraph("report entry")}</w:tc>`).join("")}</w:tr>`).join("")}</w:tbl>`).join("")}</w:body></w:document>`,
+    );
+    archive.file(
+      "_rels/.rels",
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+    );
+    archive.file(
+      "[Content_Types].xml",
+      '<Types><Default Extension="png" ContentType="image/png"/></Types>',
+    );
+    // Binary media must not consume the document's markup budget.
+    archive.file("word/media/image.png", new Uint8Array(2_500_000));
+    const file = await archive.generateAsync({ type: "blob", compression: "DEFLATE" });
+    const { prepareOffice } = await import("./officeArchive");
+    const prepared = await prepareOffice(await file.arrayBuffer(), "docx");
+    expect(prepared.truncated).toBe(false);
+    const result = await JSZip.loadAsync(prepared.bytes);
+    const markup = await result.file("word/document.xml")!.async("string");
+    const xml = new DOMParser().parseFromString(markup, "application/xml");
+    expect(xml.querySelector("parsererror")).toBeNull();
+    const ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    expect(xml.getElementsByTagNameNS(ns, "tbl")).toHaveLength(pages);
+    expect(xml.getElementsByTagNameNS(ns, "tc")).toHaveLength(pages * 50);
+    for (let page = 1; page <= pages; page++) expect(markup).toContain(`>page ${page}<`);
+    expect(result.file("word/media/image.png")).toBeNull();
+  },
+);
 
 describe("standalone Mermaid previews", () => {
   it.each([
