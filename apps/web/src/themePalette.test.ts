@@ -11,6 +11,7 @@ import {
   getThemeModes,
   getCustomThemes,
   getStandardThemeColors,
+  getStandardPaintedThemeColors,
   getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
@@ -544,6 +545,12 @@ describe("theme files", () => {
 });
 
 describe("context chip colors", () => {
+  it("uses the black canvas and raised message surface of the standard dark layouts", () => {
+    const colors = getStandardPaintedThemeColors("dark");
+    expect(asHex(colors.canvas)).toBe("#000000");
+    expect(asHex(colors.messageSurface)).toBe("#1e1e1e");
+  });
+
   it.each([
     ["#ffffff", 5],
     ["#777777", 4.5],

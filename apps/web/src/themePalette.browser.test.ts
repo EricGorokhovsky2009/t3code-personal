@@ -29,7 +29,7 @@ describe("standard painted theme colors", () => {
         root.toggleAttribute("data-redesign", redesign);
         for (const appearance of ["light", "dark"] as const) {
           root.classList.toggle("dark", appearance === "dark");
-          const colors = getStandardPaintedThemeColors(appearance, redesign);
+          const colors = getStandardPaintedThemeColors(appearance);
           const canvas = paintedChannels("--background");
           for (const [variable, role] of [
             ["--background", "canvas"],
